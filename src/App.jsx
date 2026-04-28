@@ -20,12 +20,15 @@ const T = {
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const SK = "qa-ado-v6";
 // localStorage storage — works in any browser without Claude.ai
-function defaultToOllamaOnce() {
+function migrateProviderOnce() {
   try {
-    if (localStorage.getItem("qa-hub-defaulted-ollama-v1")) return;
-    localStorage.setItem("qa-hub-ai-provider", "ollama");
-    localStorage.setItem("qa-hub-ollama-model", "qwen2.5:1.5b");
-    localStorage.setItem("qa-hub-defaulted-ollama-v1", "1");
+    if (localStorage.getItem("qa-hub-migrated-copilot-v1")) return;
+    if (localStorage.getItem("qa-hub-ai-provider") === "ollama") {
+      localStorage.setItem("qa-hub-ai-provider", "copilot");
+    }
+    localStorage.removeItem("qa-hub-ollama-model");
+    localStorage.removeItem("qa-hub-defaulted-ollama-v1");
+    localStorage.setItem("qa-hub-migrated-copilot-v1", "1");
   } catch {}
 }
 async function loadDB() {
@@ -34,7 +37,7 @@ async function loadDB() {
 async function saveDB(d) { try { localStorage.setItem(SK, JSON.stringify(d)); } catch {} }
 function getApiKey() {
   const provider = getAIProvider();
-  if(provider==="ollama" || provider==="copilot") return "";
+  if(provider==="copilot") return "";
   if(provider==="openai"){
     return (typeof import.meta !== "undefined" ? import.meta.env?.VITE_OPENAI_KEY : "") ||
            localStorage.getItem("qa-hub-openai-key") || "";
@@ -44,10 +47,7 @@ function getApiKey() {
          localStorage.getItem("qa-hub-apikey") || "";
 }
 function getAIProvider() {
-  return localStorage.getItem("qa-hub-ai-provider") || "openai";
-}
-function getOllamaModel() {
-  return localStorage.getItem("qa-hub-ollama-model") || "qwen2.5:1.5b";
+  return localStorage.getItem("qa-hub-ai-provider") || "copilot";
 }
 function getCopilotModel() {
   return localStorage.getItem("qa-hub-copilot-model") || "gpt-4o";
@@ -59,7 +59,7 @@ function getAnalysisModel() {
 }
 function setAnalysisModel(m) { try { localStorage.setItem("qa-hub-copilot-analysis-model", m); } catch {} }
 function hasAIConfig() {
-  return getAIProvider()==="ollama" || getAIProvider()==="copilot" || !!getApiKey();
+  return getAIProvider()==="copilot" || !!getApiKey();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -316,50 +316,6 @@ async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onCh
         const payload=line.slice(5).trim();
         if(payload==="[DONE]") return full;
         try{ const j=JSON.parse(payload); const part=j.choices?.[0]?.delta?.content||""; if(part){ full+=part; onChunk(full); } }catch{}
-      }
-    }
-    return full;
-  }
-  if(provider==="ollama"){
-    const stream = !!onChunk && !jsonMode;
-    const body={
-      model:getOllamaModel(),
-      stream,
-      keep_alive:"30m",
-      options:{
-        num_predict:maxTokens,
-        num_ctx:jsonMode?4096:2048,
-        num_thread:4,
-        temperature:0.1
-      },
-      messages:[{role:"system",content:system},...messages]
-    };
-    if(jsonMode) body.format="json";
-    const r = await fetch("http://localhost:11434/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},signal,body:JSON.stringify(body)});
-    if(!r.ok){ let msg="Ollama request failed."; try{const e=await r.json();msg=e.error||msg;}catch{} throw new Error(msg+" Make sure Ollama is running and the selected model is pulled."); }
-    if(!stream){
-      const d = await r.json();
-      if(d.error) throw new Error(d.error);
-      return d.message?.content || "";
-    }
-    // NDJSON stream
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf="", full="";
-    while(true){
-      const {value,done}=await reader.read();
-      if(done) break;
-      buf+=decoder.decode(value,{stream:true});
-      let nl;
-      while((nl=buf.indexOf("\n"))>=0){
-        const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
-        if(!line) continue;
-        try{
-          const j=JSON.parse(line);
-          const part=j.message?.content||"";
-          if(part){ full+=part; onChunk(full); }
-          if(j.done) return full;
-        }catch{}
       }
     }
     return full;
@@ -752,14 +708,12 @@ function CopilotAuthSection() {
 function SettingsPanel({ onClose, onSaved }) {
   const [provider, setProvider] = useState(getAIProvider());
   const [key, setKey] = useState(getApiKey());
-  const [ollamaModel, setOllamaModel] = useState(getOllamaModel());
   const [saved, setSaved] = useState(false);
   const save = () => {
     localStorage.setItem("qa-hub-ai-provider", provider);
-    if(provider==="ollama") localStorage.setItem("qa-hub-ollama-model", ollamaModel.trim()||"qwen2.5:1.5b");
-    else if(provider==="copilot") { /* nothing to save — token lives on server */ }
+    if(provider==="copilot") { /* nothing to save — token lives on server */ }
     else localStorage.setItem(provider==="openai"?"qa-hub-openai-key":"qa-hub-anthropic-key", key.trim());
-    onSaved?.(provider==="ollama" || provider==="copilot" || !!key.trim());
+    onSaved?.(provider==="copilot" || !!key.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
@@ -778,16 +732,10 @@ function SettingsPanel({ onClose, onSaved }) {
           <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>AI Provider <span style={{color:T.accent}}>*</span></label>
           <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
             <button type="button" onClick={()=>changeProvider("copilot")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="copilot"?T.blue:T.border}`,borderRadius:T.r,background:provider==="copilot"?T.blueBg:T.bgCard,color:provider==="copilot"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>GitHub Copilot</button>
-            <button type="button" onClick={()=>changeProvider("ollama")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="ollama"?T.blue:T.border}`,borderRadius:T.r,background:provider==="ollama"?T.blueBg:T.bgCard,color:provider==="ollama"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>Ollama Local</button>
             <button type="button" onClick={()=>changeProvider("openai")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="openai"?T.blue:T.border}`,borderRadius:T.r,background:provider==="openai"?T.blueBg:T.bgCard,color:provider==="openai"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>OpenAI</button>
             <button type="button" onClick={()=>changeProvider("anthropic")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="anthropic"?T.blue:T.border}`,borderRadius:T.r,background:provider==="anthropic"?T.blueBg:T.bgCard,color:provider==="anthropic"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>Anthropic</button>
           </div>
-          {provider==="copilot"? <CopilotAuthSection/> : provider==="ollama"? <>
-            <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>Ollama Model</label>
-            <input value={ollamaModel} onChange={e=>setOllamaModel(e.target.value)} placeholder="qwen2.5:1.5b"
-              style={{padding:"8px 11px",border:`1.5px solid ${T.border}`,borderRadius:T.r,fontFamily:"monospace",fontSize:12,color:T.text,background:T.bgCard,outline:"none"}}
-              onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
-          </> : <>
+          {provider==="copilot"? <CopilotAuthSection/> : <>
             <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>{provider==="openai"?"OpenAI":"Anthropic"} API Key <span style={{color:T.accent}}>*</span></label>
             <input type="password" value={key} onChange={e=>setKey(e.target.value)}
               placeholder={provider==="openai"?"sk-...":"sk-ant-..."}
@@ -795,8 +743,8 @@ function SettingsPanel({ onClose, onSaved }) {
               onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
           </>}
           <span style={{fontSize:10,color:T.textFaint}}>
-            {provider==="ollama"?<>No API key needed. Pull the same model locally with <code>ollama pull {ollamaModel||"qwen2.5:1.5b"}</code>.</>:provider==="openai"?<>Get yours at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style={{color:T.blue}}>platform.openai.com/api-keys ↗</a>.</>:<>Get yours at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{color:T.blue}}>console.anthropic.com/settings/keys ↗</a>.</>}
-            {provider!=="ollama"&&" Stored only in this browser (localStorage), never sent anywhere except the selected AI provider."}
+            {provider==="openai"?<>Get yours at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style={{color:T.blue}}>platform.openai.com/api-keys ↗</a>.</>:provider==="anthropic"?<>Get yours at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{color:T.blue}}>console.anthropic.com/settings/keys ↗</a>.</>:<>Sign in with your GitHub account that has Copilot access — token stays on the server.</>}
+            {provider!=="copilot"&&" Stored only in this browser (localStorage), never sent anywhere except the selected AI provider."}
           </span>
         </div>
         <div style={{padding:"9px 12px",background:T.amberBg,border:`1px solid ${T.amberBd}`,borderRadius:T.r,fontSize:11,color:"#78350f",marginBottom:16,lineHeight:1.6}}>
@@ -1411,7 +1359,7 @@ function WorkItemDetail({item, qaData, onUpdateQA, conn, allItems, hasAI, onOpen
   const sf=(setter)=>(v)=>{dirty.current=true;setter(v);};
 
   const handleReview=async()=>{
-    if(!hasAI){setErr("Choose Ollama Local or add an AI API key to run review.");onOpenSettings?.();return;}
+    if(!hasAI){setErr("Sign in to GitHub Copilot or add an AI API key to run review.");onOpenSettings?.();return;}
     if(!editContent.trim()&&!item.description){setErr("Add description content first.");return;}
     setErr(null);setRLoading(true);setTab("review");
     try{
@@ -1423,7 +1371,7 @@ function WorkItemDetail({item, qaData, onUpdateQA, conn, allItems, hasAI, onOpen
   };
 
   const handleGenTC=async()=>{
-    if(!hasAI){setErr("Choose Ollama Local or add an AI API key to generate tests.");onOpenSettings?.();return;}
+    if(!hasAI){setErr("Sign in to GitHub Copilot or add an AI API key to generate tests.");onOpenSettings?.();return;}
     if(!qaData?.review?.readyForTesting){setErr("Review first and achieve score ≥ 7.");return;}
     setErr(null);setTcLoading(true);setTab("tests");
     try{
@@ -1436,7 +1384,7 @@ function WorkItemDetail({item, qaData, onUpdateQA, conn, allItems, hasAI, onOpen
   };
 
   const handleCoverageAgent=async()=>{
-    if(!hasAI){setErr("Choose Ollama Local or add an AI API key to run coverage analysis.");onOpenSettings?.();return;}
+    if(!hasAI){setErr("Sign in to GitHub Copilot or add an AI API key to run coverage analysis.");onOpenSettings?.();return;}
     if(!editContent.trim()&&!item.description){setErr("Add description content first.");return;}
     setErr(null);setCovLoading(true);setTab("coverage");
     try{
@@ -1643,7 +1591,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [provider, setProvider] = useState(getAIProvider());
-  const [modelName, setModelName] = useState(()=> getAIProvider()==="copilot"?getCopilotModel():getAIProvider()==="ollama"?getOllamaModel():"");
+  const [modelName, setModelName] = useState(()=> getAIProvider()==="copilot"?getCopilotModel():"");
   const [agentMode, setAgentMode] = useState(()=> localStorage.getItem("qa-hub-agent-mode")==="1");
   useEffect(()=>{ localStorage.setItem("qa-hub-agent-mode", agentMode?"1":"0"); },[agentMode]);
   const [copilotModels, setCopilotModels] = useState([]);
@@ -1735,7 +1683,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
         const reply = await callClaude(
           sys,
           history.slice(-12).map(m=>({role:m.role,content:m.content})),
-          provider==="ollama"?800:1500,
+          1500,
           false,
           (partial)=> setMessages(prev=>{ const c=prev.slice(); c[c.length-1]={...c[c.length-1],content:partial}; return c; }),
           ac.signal
@@ -1766,10 +1714,9 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
 
       {/* Provider/model row */}
       <div style={{padding:"6px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",gap:6,alignItems:"center",fontSize:11,color:T.textMuted,background:T.bgMuted}}>
-        <select value={provider} onChange={e=>{ setProvider(e.target.value); localStorage.setItem("qa-hub-ai-provider",e.target.value); setModelName(e.target.value==="copilot"?getCopilotModel():e.target.value==="ollama"?getOllamaModel():""); }}
+        <select value={provider} onChange={e=>{ setProvider(e.target.value); localStorage.setItem("qa-hub-ai-provider",e.target.value); setModelName(e.target.value==="copilot"?getCopilotModel():""); }}
           style={{fontSize:11,padding:"3px 6px",border:`1px solid ${T.border}`,borderRadius:4,background:T.bgCard}}>
           <option value="copilot">GitHub Copilot</option>
-          <option value="ollama">Ollama Local</option>
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
         </select>
@@ -1786,11 +1733,6 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
               placeholder="gpt-4o"
               style={{fontSize:11,padding:"3px 6px",border:`1px solid ${T.border}`,borderRadius:4,background:T.bgCard,fontFamily:"monospace",width:130}}/>
           )
-        )}
-        {provider==="ollama" && (
-          <input value={modelName} onChange={e=>{ setModelName(e.target.value); localStorage.setItem("qa-hub-ollama-model",e.target.value); }}
-            placeholder="qwen2.5:1.5b"
-            style={{fontSize:11,padding:"3px 6px",border:`1px solid ${T.border}`,borderRadius:4,background:T.bgCard,fontFamily:"monospace",width:130}}/>
         )}
         <span style={{flex:1}}/>
         <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:agentMode?T.blue:T.textMuted,cursor:provider==="copilot"?"pointer":"not-allowed",opacity:provider==="copilot"?1:0.5}} title={provider==="copilot"?"Agent mode: model can call MCP tools":"Agent mode requires GitHub Copilot provider"}>
@@ -1861,7 +1803,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
 }
 
 export default function App() {
-  defaultToOllamaOnce();
+  migrateProviderOnce();
   const [conn,    setConn]    = useState(null);
   const [items,   setItems]   = useState([]);
   const [qaStore, setQaStore] = useState({});   // keyed by work item ID
