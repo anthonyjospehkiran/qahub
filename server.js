@@ -20,6 +20,7 @@ import fetch   from 'node-fetch';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { randomBytes } from 'crypto';
 import 'dotenv/config';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +29,25 @@ const PORT  = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
+
+// ── Per-browser session store (in-memory) ────────────────────────────────────
+// Each browser gets its own session cookie so each team member signs in with
+// their own GitHub Copilot account and uses their own subscription.
+const SESSIONS = new Map();
+
+function getSession(req, res) {
+  const cookieHeader = req.headers.cookie || '';
+  let sid = (cookieHeader.match(/(?:^|;\s*)qahub-sid=([^;]+)/) || [])[1] || '';
+  if (!sid || !SESSIONS.has(sid)) {
+    sid = randomBytes(24).toString('hex');
+    SESSIONS.set(sid, {
+      githubToken: '', copilotToken: '', copilotTokenExp: 0,
+      lastDeviceCode: '', lastUserCode: '', lastDeviceExp: 0,
+    });
+    res.setHeader('Set-Cookie', `qahub-sid=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60*60*24*30}`);
+  }
+  return SESSIONS.get(sid);
+}
 
 // ── 1. Proxy → Anthropic API ──────────────────────────────────────────────────
 // Frontend calls POST /api/claude with the same body as the Anthropic messages API.
@@ -55,16 +75,10 @@ app.post('/api/claude', async (req, res) => {
 // (same one Copilot.vim and Neovim plugin use). Lets users sign in with their
 // own Copilot subscription without registering a custom GitHub App.
 const COPILOT_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Iv1.b507a08c87ecfe98';
-let GITHUB_USER_TOKEN = process.env.GITHUB_USER_TOKEN || '';
-let COPILOT_TOKEN = process.env.COPILOT_TOKEN || '';
-let COPILOT_TOKEN_EXP = 0;
-let LAST_DEVICE_CODE = '';
-let LAST_USER_CODE = '';
-let LAST_DEVICE_EXP = 0;
 
-// Start device-flow login. Requires a GitHub App / OAuth App CLIENT_ID with
-// Copilot Chat permission, set as GITHUB_CLIENT_ID in .env.
-app.post('/api/copilot/auth/start', async (_req, res) => {
+// Start device-flow login. Tokens are stored per-session (per browser).
+app.post('/api/copilot/auth/start', async (req, res) => {
+  const session = getSession(req, res);
   try {
     const r = await fetch('https://github.com/login/device/code', {
       method: 'POST',
@@ -73,15 +87,16 @@ app.post('/api/copilot/auth/start', async (_req, res) => {
     });
     const d = await r.json();
     if (d.error) return res.status(400).json(d);
-    LAST_DEVICE_CODE = d.device_code || '';
-    LAST_USER_CODE = d.user_code || '';
-    LAST_DEVICE_EXP = Date.now() + ((d.expires_in||900)*1000);
-    res.json(d); // { device_code, user_code, verification_uri, interval, expires_in }
+    session.lastDeviceCode = d.device_code || '';
+    session.lastUserCode = d.user_code || '';
+    session.lastDeviceExp = Date.now() + ((d.expires_in||900)*1000);
+    res.json(d);
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
 app.post('/api/copilot/auth/poll', async (req, res) => {
-  const device_code = (req.body && req.body.device_code) || LAST_DEVICE_CODE;
+  const session = getSession(req, res);
+  const device_code = (req.body && req.body.device_code) || session.lastDeviceCode;
   if (!device_code) return res.status(400).json({ error: 'Missing device_code. Click Sign in again.' });
   try {
     const r = await fetch('https://github.com/login/oauth/access_token', {
@@ -91,23 +106,23 @@ app.post('/api/copilot/auth/poll', async (req, res) => {
     });
     const d = await r.json();
     if (d.access_token) {
-      GITHUB_USER_TOKEN = d.access_token;
-      COPILOT_TOKEN = '';
-      COPILOT_TOKEN_EXP = 0;
-      const ok = await refreshCopilotToken();
+      session.githubToken = d.access_token;
+      session.copilotToken = '';
+      session.copilotTokenExp = 0;
+      const ok = await refreshCopilotToken(session);
       if (!ok.ok) return res.status(400).json({ error: ok.error || 'No Copilot access on this account.' });
       return res.json({ ok: true });
     }
-    res.json(d); // { error: 'authorization_pending' | 'slow_down' | ... }
+    res.json(d);
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
-async function refreshCopilotToken() {
-  if (!GITHUB_USER_TOKEN) return { ok: false, error: 'Not signed in.' };
+async function refreshCopilotToken(session) {
+  if (!session.githubToken) return { ok: false, error: 'Not signed in.' };
   try {
     const ct = await fetch('https://api.github.com/copilot_internal/v2/token', {
       headers: {
-        'Authorization': `token ${GITHUB_USER_TOKEN}`,
+        'Authorization': `token ${session.githubToken}`,
         'Accept': 'application/json',
         'User-Agent': 'qahub-copilot',
         'Editor-Version': 'Neovim/0.6.1',
@@ -115,31 +130,38 @@ async function refreshCopilotToken() {
       },
     });
     const tok = await ct.json();
-    if (tok.token) { COPILOT_TOKEN = tok.token; COPILOT_TOKEN_EXP = (tok.expires_at || 0) * 1000; return { ok: true }; }
+    if (tok.token) {
+      session.copilotToken = tok.token;
+      session.copilotTokenExp = (tok.expires_at || 0) * 1000;
+      return { ok: true };
+    }
     return { ok: false, error: tok.message || 'Failed to obtain Copilot token. Account may not have Copilot access.' };
   } catch (e) { return { ok: false, error: e.message }; }
 }
 
-async function ensureCopilotToken() {
-  if (COPILOT_TOKEN && Date.now() < COPILOT_TOKEN_EXP - 60_000) return true;
-  if (process.env.COPILOT_TOKEN && !GITHUB_USER_TOKEN) { COPILOT_TOKEN = process.env.COPILOT_TOKEN; COPILOT_TOKEN_EXP = Date.now() + 25*60*1000; return true; }
-  const r = await refreshCopilotToken(); return r.ok;
+async function ensureCopilotToken(session) {
+  if (session.copilotToken && Date.now() < session.copilotTokenExp - 60_000) return true;
+  const r = await refreshCopilotToken(session); return r.ok;
 }
 
-app.get('/api/copilot/auth/status', (_req, res) => res.json({
-  authenticated: !!(COPILOT_TOKEN || GITHUB_USER_TOKEN || process.env.COPILOT_TOKEN),
-  pendingUserCode: (!GITHUB_USER_TOKEN && Date.now() < LAST_DEVICE_EXP) ? LAST_USER_CODE : null,
-}));
+app.get('/api/copilot/auth/status', (req, res) => {
+  const session = getSession(req, res);
+  res.json({
+    authenticated: !!(session.copilotToken || session.githubToken),
+    pendingUserCode: (!session.githubToken && Date.now() < session.lastDeviceExp) ? session.lastUserCode : null,
+  });
+});
 
 // Streaming chat proxy: POST { model, messages, stream } → SSE to client.
 app.post('/api/copilot/chat', async (req, res) => {
-  const ok = await ensureCopilotToken();
+  const session = getSession(req, res);
+  const ok = await ensureCopilotToken(session);
   if (!ok) return res.status(401).json({ error: 'Not authenticated. Open Settings → GitHub Copilot → Sign in.' });
   try {
     const upstream = await fetch('https://api.githubcopilot.com/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${COPILOT_TOKEN}`,
+        'Authorization': `Bearer ${session.copilotToken}`,
         'Content-Type': 'application/json',
         'Copilot-Integration-Id': 'vscode-chat',
         'Editor-Version': 'vscode/1.93.0',
@@ -163,13 +185,14 @@ app.post('/api/copilot/chat', async (req, res) => {
 });
 
 // List Copilot-available models (best-effort).
-app.get('/api/copilot/models', async (_req, res) => {
-  const ok = await ensureCopilotToken();
+app.get('/api/copilot/models', async (req, res) => {
+  const session = getSession(req, res);
+  const ok = await ensureCopilotToken(session);
   if (!ok) return res.json({ data: [] });
   try {
     const r = await fetch('https://api.githubcopilot.com/models', {
       headers: {
-        'Authorization': `Bearer ${COPILOT_TOKEN}`,
+        'Authorization': `Bearer ${session.copilotToken}`,
         'Copilot-Integration-Id': 'vscode-chat',
         'Editor-Version': 'vscode/1.93.0',
       },
@@ -298,7 +321,8 @@ app.post('/api/mcp/call', async (req, res) => {
 //   {"type":"delta","text":"..."}      // final assistant text deltas
 //   {"type":"done"}  | {"type":"error","error":"..."}
 app.post('/api/agent/chat', async (req, res) => {
-  const ok = await ensureCopilotToken();
+  const session = getSession(req, res);
+  const ok = await ensureCopilotToken(session);
   if (!ok) { res.status(401).json({ error: 'Not authenticated. Sign in to GitHub Copilot in Settings.' }); return; }
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache');
@@ -315,7 +339,7 @@ app.post('/api/agent/chat', async (req, res) => {
       const r = await fetch('https://api.githubcopilot.com/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${COPILOT_TOKEN}`,
+          'Authorization': `Bearer ${session.copilotToken}`,
           'Content-Type': 'application/json',
           'Copilot-Integration-Id': 'vscode-chat',
           'Editor-Version': 'vscode/1.93.0',
