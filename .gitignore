@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.local
+.DS_Store
+
+# Logs / editor / OS
+npm-debug.log*
+yarn-debug.log*
+.vscode/
+.idea/
+Thumbs.db
+
+# QAHub local state
+copilot-token.json
+mcp-token.json
+*.pat
