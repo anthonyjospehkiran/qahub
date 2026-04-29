@@ -23,6 +23,7 @@ if (!ORG || !PROJECT || !PAT) {
 
 const auth = 'Basic ' + Buffer.from(':' + PAT).toString('base64');
 const base = `${ORG}/${encodeURIComponent(PROJECT)}/_apis`;
+const wiqlStr = (v) => `'${String(v ?? '').replace(/'/g, "''")}'`;
 
 async function ado(path, opts = {}) {
   const sep = path.includes('?') ? '&' : '?';
@@ -93,9 +94,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         break;
       }
       case 'ado_search_work_items': {
-        const conds = [`[System.TeamProject]=@project`, `[System.Title] CONTAINS '${(args.title || '').replace(/'/g, "''")}'`];
-        if (args.type) conds.push(`[System.WorkItemType]='${args.type}'`);
-        if (args.state) conds.push(`[System.State]='${args.state}'`);
+        const conds = [`[System.TeamProject]=@project`, `[System.Title] CONTAINS ${wiqlStr(args.title || '')}`];
+        if (args.type) conds.push(`[System.WorkItemType]=${wiqlStr(args.type)}`);
+        if (args.state) conds.push(`[System.State]=${wiqlStr(args.state)}`);
         const wiql = `SELECT [System.Id],[System.Title],[System.WorkItemType],[System.State] FROM WorkItems WHERE ${conds.join(' AND ')} ORDER BY [System.ChangedDate] DESC`;
         out = await ado(`/${encodeURIComponent(PROJECT)}/_apis/wit/wiql?$top=50`, { method: 'POST', body: { query: wiql } });
         break;

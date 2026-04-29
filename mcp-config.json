@@ -11,6 +11,16 @@
       "command": "node",
       "args": ["./mcp-servers/ado-mcp.mjs"]
     },
+    "steel": {
+      "enabled": true,
+      "command": "node",
+      "args": ["./mcp-servers/steel-domain-mcp.mjs"]
+    },
+    "rag": {
+      "enabled": false,
+      "command": "node",
+      "args": ["./mcp-servers/azure-search-rag-mcp.mjs"]
+    },
     "git": {
       "enabled": false,
       "command": "uvx",

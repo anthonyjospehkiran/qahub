@@ -1,21 +1,104 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── Theme ────────────────────────────────────────────────────────────────────
-const T = {
-  bg:"#f5f3ee", bgCard:"#ffffff", bgMuted:"#edeae2", bgDeep:"#e4e0d6",
-  navy:"#1b2039", navyMid:"#2c3358", navyLight:"#3d4870",
-  accent:"#c95519", accentLight:"#fff3ec",
-  border:"#e0dbd0", borderMid:"#cbc4b4",
-  text:"#1a1714", textMuted:"#6b6460", textFaint:"#aaa49c",
+// ─── Theme system: light + dark, swappable at runtime ───────────────────────
+// Structural tokens are theme-independent (radius, type/space scale, fonts).
+const STRUCT = {
+  r:"8px", rLg:"12px", rFull:"999px",
+  fs:{ xs:"11px", sm:"12px", md:"13px", lg:"15px", xl:"18px", xxl:"22px", xxxl:"28px" },
+  fw:{ regular:400, medium:500, semibold:600, bold:700 },
+  lh:{ tight:1.3, snug:1.5, normal:1.65 },
+  sp:{ xs:4, sm:6, md:8, lg:12, xl:16, xxl:24, xxxl:32 },
+  font:"'Inter','Segoe UI',-apple-system,system-ui,sans-serif",
+  fontMono:"'JetBrains Mono','SF Mono',Consolas,monospace",
+  fontDisplay:"'Inter','Segoe UI',-apple-system,sans-serif",
+};
+// Light theme — refined: cooler greys, Nucor cardinal accent.
+const LIGHT = {
+  ...STRUCT, name:"light",
+  bg:"#fafaf9", bgCard:"#ffffff", bgMuted:"#f4f4f5", bgDeep:"#e7e5e4",
+  navy:"#0f172a", navyMid:"#1e293b", navyLight:"#334155",
+  accent:"#dc2626", accentLight:"#fef2f2",
+  border:"#e7e5e4", borderMid:"#d6d3d1",
+  text:"#0c0a09", textMuted:"#57534e", textFaint:"#a8a29e",
   green:"#16a34a", greenBg:"#f0fdf4", greenBd:"#86efac",
   amber:"#d97706", amberBg:"#fffbeb", amberBd:"#fde68a",
   red:"#dc2626",   redBg:"#fef2f2",   redBd:"#fca5a5",
   violet:"#7c3aed",violetBg:"#f5f3ff",violetBd:"#c4b5fd",
   blue:"#2563eb",  blueBg:"#eff6ff",  blueBd:"#bfdbfe",
   cyan:"#0891b2",  cyanBg:"#ecfeff",
-  r:"8px", rLg:"12px", rFull:"999px",
   sh:"0 1px 3px rgba(0,0,0,0.07)", shMd:"0 4px 16px rgba(0,0,0,0.10)",
+  surface1:"#ffffff", surface2:"#f4f4f5", surface3:"#e7e5e4",
 };
+// Dark theme — control-room aesthetic: deep navy, electric-cyan accent.
+const DARK = {
+  ...STRUCT, name:"dark",
+  bg:"#0a0e17", bgCard:"#0f172a", bgMuted:"#1a2236", bgDeep:"#0c1424",
+  navy:"#0f172a", navyMid:"#1e293b", navyLight:"#334155",
+  accent:"#22d3ee", accentLight:"#0a1f2a",
+  border:"#1e293b", borderMid:"#334155",
+  text:"#f1f5f9", textMuted:"#94a3b8", textFaint:"#64748b",
+  green:"#4ade80", greenBg:"#052e16", greenBd:"#14532d",
+  amber:"#fbbf24", amberBg:"#3a2106", amberBd:"#52310a",
+  red:"#f87171",   redBg:"#3a0a0a",   redBd:"#52060a",
+  violet:"#a78bfa",violetBg:"#1e1b4b",violetBd:"#312e81",
+  blue:"#60a5fa",  blueBg:"#0a1628",  blueBd:"#1e3a5f",
+  cyan:"#22d3ee",  cyanBg:"#0a2530",
+  sh:"0 1px 3px rgba(0,0,0,0.4)", shMd:"0 4px 18px rgba(0,0,0,0.55)",
+  surface1:"#0f172a", surface2:"#1a2236", surface3:"#1e293b",
+};
+// Live token object. Mutated in place on theme change so every consumer of T
+// picks up new values on its next render (no signature changes required).
+const T = { ...LIGHT };
+const _themeListeners = new Set();
+function applyTheme(name) {
+  Object.assign(T, name === "dark" ? DARK : LIGHT);
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-theme", name);
+    document.documentElement.style.colorScheme = name;
+  }
+  try { localStorage.setItem("qa-hub-theme", name); } catch {}
+  _themeListeners.forEach(fn => { try { fn(name); } catch {} });
+}
+function useTheme() {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const fn = () => force(x => x + 1);
+    _themeListeners.add(fn);
+    return () => { _themeListeners.delete(fn); };
+  }, []);
+  return [T.name, applyTheme];
+}
+// Initialize theme: saved → system pref → light.
+(function initTheme() {
+  if (typeof window === "undefined") return;
+  let saved = null;
+  try { saved = localStorage.getItem("qa-hub-theme"); } catch {}
+  const sys = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(saved || sys);
+})();
+// Inject global stylesheet once: fonts, keyframes, focus rings, scrollbar.
+(function injectGlobalStyle() {
+  if (typeof document === "undefined") return;
+  if (document.getElementById("qa-hub-global-style")) return;
+  const s = document.createElement("style");
+  s.id = "qa-hub-global-style";
+  s.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    html, body, #root { margin:0; padding:0; height:100%; }
+    body { font-family:'Inter','Segoe UI',-apple-system,system-ui,sans-serif; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+    *:focus-visible { outline: 2px solid #22d3ee; outline-offset: 2px; }
+    [data-theme="light"] *:focus-visible { outline-color:#2563eb; }
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background:#9ca3af55; border-radius:6px; }
+    ::-webkit-scrollbar-thumb:hover { background:#9ca3af99; }
+    [data-theme="dark"] ::-webkit-scrollbar-thumb { background:#33415555; }
+    [data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background:#475569; }
+  `;
+  document.head.appendChild(s);
+})();
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 const SK = "qa-ado-v6";
@@ -32,9 +115,27 @@ function migrateProviderOnce() {
   } catch {}
 }
 async function loadDB() {
-  try { const r = localStorage.getItem(SK); return r ? JSON.parse(r) : null; } catch { return null; }
+  try {
+    const r = localStorage.getItem(SK);
+    if (!r) return null;
+    const db = JSON.parse(r);
+    if (db?.conn?.pat) {
+      delete db.conn.pat;
+      localStorage.setItem(SK, JSON.stringify(db));
+    }
+    return db;
+  } catch { return null; }
 }
-async function saveDB(d) { try { localStorage.setItem(SK, JSON.stringify(d)); } catch {} }
+function stripSecretsForStorage(d) {
+  if (!d) return d;
+  const out = { ...d };
+  if (out.conn) {
+    const { pat, ...safeConn } = out.conn;
+    out.conn = safeConn;
+  }
+  return out;
+}
+async function saveDB(d) { try { localStorage.setItem(SK, JSON.stringify(stripSecretsForStorage(d))); } catch {} }
 function getApiKey() {
   const provider = getAIProvider();
   if(provider==="copilot") return "";
@@ -58,6 +159,45 @@ function getAnalysisModel() {
   return localStorage.getItem("qa-hub-copilot-analysis-model") || getCopilotModel();
 }
 function setAnalysisModel(m) { try { localStorage.setItem("qa-hub-copilot-analysis-model", m); } catch {} }
+const MODEL_ROUTE = {
+  openai: {
+    chat: "gpt-4.1-mini",
+    review: "gpt-4.1",
+    tests: "gpt-5",
+    coverage: "gpt-5",
+  },
+  anthropic: {
+    chat: "claude-haiku-4-5",
+    review: "claude-sonnet-4-6",
+    tests: "claude-opus-4-7",
+    coverage: "claude-opus-4-7",
+  },
+};
+function getTaskModel(provider, task="chat") {
+  if (provider === "copilot") return task === "chat" ? getCopilotModel() : getAnalysisModel();
+  const key = `qa-hub-${provider}-${task}-model`;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) return saved;
+  } catch {}
+  return MODEL_ROUTE[provider]?.[task] || MODEL_ROUTE[provider]?.chat;
+}
+function makeOpenAIJsonFormat() {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "qa_hub_structured_output",
+      schema: { type: "object", additionalProperties: true },
+      strict: false,
+    },
+  };
+}
+function makeAnthropicSystem(system) {
+  return [{ type:"text", text:system, cache_control:{ type:"ephemeral" } }];
+}
+function openAITokenBudget(model, maxTokens) {
+  return /^gpt-5|^o\d|^o-/i.test(model) ? { max_completion_tokens:maxTokens } : { max_tokens:maxTokens };
+}
 function hasAIConfig() {
   return getAIProvider()==="copilot" || !!getApiKey();
 }
@@ -88,33 +228,69 @@ function parseOrg(raw) {
   return s;
 }
 
+function wiqlStr(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
 // ─── Azure DevOps API ─────────────────────────────────────────────────────────
 function adoBase(org) { return `https://dev.azure.com/${parseOrg(org)}`; }
 function adoHdr(pat)  { return { Authorization:`Basic ${btoa(`:${pat}`)}`, "Content-Type":"application/json", Accept:"application/json" }; }
 
 // CORS proxy — used automatically when direct requests are blocked (common from browser-based tools)
-const CORS_PROXY = "https://corsproxy.io/?url=";
-let _proxyMode = false;   // toggled on when direct call fails
-let _proxyConfirmed = false; // true once proxy has succeeded
+let _proxyMode = false;
+let _proxyConfirmed = false;
 
 function proxify(url) {
-  return _proxyMode ? `${CORS_PROXY}${encodeURIComponent(url)}` : url;
+  return url;
+}
+
+function adoProxyUrl(url) {
+  return `/api/ado?url=${encodeURIComponent(url)}`;
 }
 
 async function _rawFetch(url, pat, opts) {
-  const res = await fetch(proxify(url), { ...opts, headers:{ ...adoHdr(pat), ...(opts.headers||{}) } });
+  const res = await fetch(url, { ...opts, headers:{ ...adoHdr(pat), ...(opts.headers||{}) } });
+  const txt = await res.text();
+  let b = {};
+  if (txt) {
+    try { b = JSON.parse(txt); }
+    catch {
+      const preview = txt.replace(/\s+/g," ").slice(0,120);
+      throw new Error(`ADO endpoint returned non-JSON (${res.status}). ${preview}`);
+    }
+  }
   if (!res.ok) {
-    const b = await res.json().catch(()=>({}));
     if (res.status===401) throw new Error("Unauthorized (401) — PAT expired or missing Work Items: Read scope.");
     if (res.status===403) throw new Error("Forbidden (403) — PAT lacks access to this project.");
     if (res.status===404) throw new Error("Not found (404) — verify org name and project name are correct.");
     throw new Error(b.message || b.errorCode || `ADO error ${res.status}`);
   }
-  return res.json();
+  return b;
 }
 
 async function adoFetch(url, pat, opts={}) {
-  // Try direct first
+  try {
+    return await _rawFetch(adoProxyUrl(url), pat, opts);
+  } catch(err) {
+    if (err.message.includes("fetch") || err.message === "Failed to fetch" || err.message.includes("non-JSON")) {
+      throw new Error("Azure DevOps connection failed. Start the bundled server with `npm run server`, then open the app at the server URL, or run Vite on port 3000 so /api/ado can proxy to server.js on port 3001.");
+    }
+    throw err;
+  }
+
+  // Try the bundled server.js proxy first. In Vite dev this is forwarded by
+  // vite.config.js to localhost:3001.
+  try {
+    const result = await _rawFetch(adoProxyUrl(url), pat, opts);
+    _proxyMode = false;
+    _proxyConfirmed = true;
+    return result;
+  } catch(localErr) {
+    if (!/Failed to fetch|non-JSON|404|502|proxy/i.test(localErr.message)) throw localErr;
+    console.warn("Local ADO proxy unavailable; trying direct ADO request.", localErr.message);
+  }
+
+  // Try direct second
   if (!_proxyMode) {
     try {
       const result = await _rawFetch(url, pat, opts);
@@ -131,12 +307,12 @@ async function adoFetch(url, pat, opts={}) {
   }
   // Proxy attempt
   try {
-    const result = await _rawFetch(url, pat, opts);
+    const result = await _rawFetch(proxify(url), pat, opts);
     _proxyConfirmed = true;
     return result;
   } catch(proxyErr) {
-    if (proxyErr.message.includes("fetch") || proxyErr.message === "Failed to fetch") {
-      throw new Error("Both direct and proxy connections failed. Check your network or try a different browser.");
+    if (proxyErr.message.includes("fetch") || proxyErr.message === "Failed to fetch" || proxyErr.message.includes("non-JSON")) {
+      throw new Error("Azure DevOps connection failed. Start the bundled server with `npm run server`, then open the app at the server URL, or run Vite on port 3000 so /api/ado can proxy to server.js on port 3001.");
     }
     throw proxyErr;
   }
@@ -160,12 +336,12 @@ async function adoIterPaths(org, project, pat) {
 }
 
 async function adoQueryWI(org, project, pat, {types=[], states=[], areaPath="", iterPath="", assignedTo="", search="", top=300}={}) {
-  const conds = [`[System.TeamProject] = '${project}'`];
-  if (types.length)  conds.push(`[System.WorkItemType] IN (${types.map(t=>`'${t}'`).join(",")})`);
-  if (states.length) conds.push(`[System.State] IN (${states.map(s=>`'${s}'`).join(",")})`);
-  if (areaPath)      conds.push(`[System.AreaPath] UNDER '${areaPath}'`);
-  if (iterPath)      conds.push(`[System.IterationPath] UNDER '${iterPath}'`);
-  if (assignedTo)    conds.push(`[System.AssignedTo] = '${assignedTo}'`);
+  const conds = [`[System.TeamProject] = ${wiqlStr(project)}`];
+  if (types.length)  conds.push(`[System.WorkItemType] IN (${types.map(wiqlStr).join(",")})`);
+  if (states.length) conds.push(`[System.State] IN (${states.map(wiqlStr).join(",")})`);
+  if (areaPath)      conds.push(`[System.AreaPath] UNDER ${wiqlStr(areaPath)}`);
+  if (iterPath)      conds.push(`[System.IterationPath] UNDER ${wiqlStr(iterPath)}`);
+  if (assignedTo)    conds.push(`[System.AssignedTo] = ${wiqlStr(assignedTo)}`);
   const wiql = `SELECT [System.Id] FROM WorkItems WHERE ${conds.join(" AND ")} ORDER BY [System.ChangedDate] DESC`;
   const base = `${adoBase(org)}/${encodeURIComponent(project)}`;
   const r = await adoFetch(`${base}/_apis/wit/wiql?api-version=7.1&$top=${top}`, pat, {method:"POST",body:JSON.stringify({query:wiql})});
@@ -288,13 +464,13 @@ function buildCoverageContext(item, items) {
 }
 
 // ─── Claude AI ────────────────────────────────────────────────────────────────
-async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onChunk=null, signal=null, modelOverride=null) {
+async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onChunk=null, signal=null, task="chat", modelOverride=null) {
   const apiKey = getApiKey();
   const provider = getAIProvider();
   if(provider==="copilot"){
     const stream = !!onChunk;
     const r = await fetch("/api/copilot/chat",{method:"POST",headers:{"Content-Type":"application/json"},signal,body:JSON.stringify({
-      model: modelOverride || getCopilotModel(),
+      model: modelOverride || getTaskModel("copilot", task),
       max_tokens:maxTokens,
       stream,
       ...(jsonMode?{response_format:{type:"json_object"}}:{}),
@@ -323,8 +499,9 @@ async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onCh
   if (!apiKey) throw new Error(`No ${provider==="openai"?"OpenAI":"Anthropic"} API key — click Settings to add one.`);
   if(provider==="openai"){
     const stream=!!onChunk;
-    const oaiBody={model:"gpt-4o-mini",max_tokens:maxTokens,stream,messages:[{role:"system",content:system},...messages]};
-    if(jsonMode) oaiBody.response_format={type:"json_object"};
+    const model = modelOverride || getTaskModel("openai", task);
+    const oaiBody={model,...openAITokenBudget(model,maxTokens),stream,messages:[{role:"system",content:system},...messages]};
+    if(jsonMode) oaiBody.response_format=makeOpenAIJsonFormat();
     const r = await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},signal,body:JSON.stringify(oaiBody)});
     if(!r.ok){ const d=await r.json().catch(()=>({})); throw new Error(d.error?.message||r.statusText); }
     if(!stream){ const d=await r.json(); return d.choices?.[0]?.message?.content||""; }
@@ -344,7 +521,7 @@ async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onCh
   }
   // Anthropic
   const stream=!!onChunk;
-  const r = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},signal,body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,stream,system,messages})});
+  const r = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"prompt-caching-2024-07-31","anthropic-dangerous-direct-browser-access":"true"},signal,body:JSON.stringify({model:modelOverride || getTaskModel("anthropic", task),max_tokens:maxTokens,stream,system:makeAnthropicSystem(system),messages})});
   if(!r.ok){ const d=await r.json().catch(()=>({})); throw new Error(d.error?.message||r.statusText); }
   if(!stream){ const d=await r.json(); return d.content?.filter(b=>b.type==="text").map(b=>b.text).join("")||""; }
   const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="", full="";
@@ -362,10 +539,42 @@ async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onCh
   return full;
 }
 
-async function callClaudeJSON(system, content, maxTokens=4096) {
+async function callAnthropicJSON(system, content, maxTokens=4096, task="review") {
+  const apiKey = getApiKey();
+  const r = await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "x-api-key":apiKey,
+      "anthropic-version":"2023-06-01",
+      "anthropic-beta":"prompt-caching-2024-07-31",
+      "anthropic-dangerous-direct-browser-access":"true",
+    },
+    body:JSON.stringify({
+      model:getTaskModel("anthropic", task),
+      max_tokens:maxTokens,
+      system:makeAnthropicSystem(system),
+      messages:[{role:"user",content}],
+      tools:[{
+        name:"emit_json",
+        description:"Return the complete QAHub analysis object as valid JSON.",
+        input_schema:{ type:"object", additionalProperties:true },
+      }],
+      tool_choice:{ type:"tool", name:"emit_json" },
+    }),
+  });
+  if(!r.ok){ const d=await r.json().catch(()=>({})); throw new Error(d.error?.message||r.statusText); }
+  const d = await r.json();
+  const tool = d.content?.find(b=>b.type==="tool_use" && b.name==="emit_json");
+  if (!tool?.input || typeof tool.input !== "object") throw new Error("Anthropic returned no structured JSON payload");
+  return tool.input;
+}
+
+async function callClaudeJSON(system, content, maxTokens=4096, task="review") {
   const provider = getAIProvider();
+  if (provider === "anthropic") return callAnthropicJSON(system, content, maxTokens, task);
   const modelOverride = provider==="copilot" ? getAnalysisModel() : null;
-  const txt = await callClaude(system,[{role:"user",content}], maxTokens, true, null, null, modelOverride);
+  const txt = await callClaude(system,[{role:"user",content}], maxTokens, true, null, null, task, modelOverride);
   const clean = txt.replace(/^```json\s*/m,"").replace(/^```\s*/m,"").replace(/\s*```$/m,"").trim();
   const parse = (value) => JSON.parse(value);
   // Try direct, then extract {...}, then repair common truncation/escape problems.
@@ -601,6 +810,32 @@ const Spin = ({label="Loading…",size=14}) => (
   </span>
 );
 
+// ─── Icon set (Lucide-inspired, inline SVG) ──────────────────────────────────
+const _ic = (size, children) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"inline-block",verticalAlign:"middle"}}>{children}</svg>;
+const Ic = {
+  Refresh: ({size=14}) => _ic(size, <><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></>),
+  Settings: ({size=14}) => _ic(size, <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>),
+  Search: ({size=14}) => _ic(size, <><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>),
+  Close: ({size=14}) => _ic(size, <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>),
+  Copy: ({size=14}) => _ic(size, <><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>),
+  Check: ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0,display:"inline-block",verticalAlign:"middle"}}><polyline points="20 6 9 17 4 12"/></svg>,
+  Send: ({size=14}) => _ic(size, <><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>),
+  ExternalLink: ({size=14}) => _ic(size, <><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>),
+  Beaker: ({size=14}) => _ic(size, <><path d="M9 3h6v5l5 11a2 2 0 0 1-1.8 3H5.8A2 2 0 0 1 4 19l5-11V3z"/><path d="M9 3h6"/></>),
+  Factory: ({size=14}) => _ic(size, <><path d="M2 22h20V11l-7 4V11l-7 4V3H2z"/><line x1="6" y1="22" x2="6" y2="18"/><line x1="10" y1="22" x2="10" y2="18"/><line x1="14" y1="22" x2="14" y2="18"/><line x1="18" y1="22" x2="18" y2="18"/></>),
+  Bot: ({size=14}) => _ic(size, <><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 2v6"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></>),
+  Message: ({size=14}) => _ic(size, <><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></>),
+  FileText: ({size=14}) => _ic(size, <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></>),
+  Microscope: ({size=14}) => _ic(size, <><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></>),
+  Sparkles: ({size=14}) => _ic(size, <><path d="M12 3l1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2z"/><path d="M19 17l.7 2.3L22 20l-2.3.7L19 23l-.7-2.3L16 20l2.3-.7z"/></>),
+  Sun: ({size=14}) => _ic(size, <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></>),
+  Moon: ({size=14}) => _ic(size, <><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></>),
+  Plug: ({size=14}) => _ic(size, <><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/></>),
+  ArrowRight: ({size=14}) => _ic(size, <><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>),
+  ArrowDown: ({size=14}) => _ic(size, <><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></>),
+  Stop: ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none" style={{flexShrink:0,display:"inline-block"}}><rect x="6" y="6" width="12" height="12" rx="1"/></svg>,
+};
+
 const StateBadge = ({state}) => {
   const m={New:{c:"#0369a1",bg:"#f0f9ff"},Active:{c:"#1d4ed8",bg:"#eff6ff"},"In Progress":{c:"#1d4ed8",bg:"#eff6ff"},Committed:{c:"#7c3aed",bg:"#f5f3ff"},Approved:{c:"#0891b2",bg:"#ecfeff"},Ready:{c:"#15803d",bg:"#f0fdf4"},"Ready for Testing":{c:"#7c3aed",bg:"#f5f3ff"},Resolved:{c:"#15803d",bg:"#f0fdf4"},Done:{c:"#15803d",bg:"#f0fdf4"},Closed:{c:"#475569",bg:"#f1f5f9"}}[state]||{c:T.textMuted,bg:T.bgMuted};
   return <span style={{padding:"1px 7px",borderRadius:T.rFull,fontSize:10,fontWeight:600,background:m.bg,color:m.c,whiteSpace:"nowrap"}}>{state||"—"}</span>;
@@ -610,6 +845,35 @@ const PriChip = ({p}) => {
   const c={Critical:T.red,High:T.amber,Medium:T.green,Low:T.textFaint}[p]||T.textFaint;
   return <span style={{fontSize:10,fontWeight:700,color:c}}>{p}</span>;
 };
+
+function ThemeToggle() {
+  const [theme, setTheme] = useTheme();
+  const dark = theme === "dark";
+  return (
+    <button
+      type="button"
+      onClick={()=>setTheme(dark ? "light" : "dark")}
+      aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+      title={dark ? "Switch to light theme" : "Switch to dark theme"}
+      style={{width:32,height:32,borderRadius:T.r,border:`1px solid ${T.border}`,background:T.bgCard,color:T.textMuted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}
+    >
+      {dark ? <Ic.Sun size={15}/> : <Ic.Moon size={15}/>}
+    </button>
+  );
+}
+
+function ProviderModelHint({provider}) {
+  if (provider === "copilot") return null;
+  const route = MODEL_ROUTE[provider] || {};
+  return (
+    <div style={{padding:"8px 10px",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,fontSize:11,color:T.textMuted,lineHeight:1.7}}>
+      <div style={{fontWeight:700,color:T.text,marginBottom:3}}>Task routing</div>
+      <div>Chat: <code>{route.chat}</code></div>
+      <div>Review: <code>{route.review}</code></div>
+      <div>Tests/Coverage: <code>{route.tests}</code> / <code>{route.coverage}</code></div>
+    </div>
+  );
+}
 
 
 // ─── GitHub Copilot device-flow login ────────────────────────────────────────
@@ -725,8 +989,8 @@ function SettingsPanel({ onClose, onSaved }) {
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
       <div style={{background:T.bgCard,borderRadius:T.rLg,padding:28,width:460,boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-          <h3 style={{fontSize:17,fontWeight:700,color:T.navy,fontFamily:"Georgia,serif",margin:0}}>⚙ Settings</h3>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:T.textFaint}}>✕</button>
+          <h3 style={{fontSize:T.fs.xl,fontWeight:T.fw.bold,color:T.text,fontFamily:T.fontDisplay,margin:0,display:"flex",alignItems:"center",gap:8}}><Ic.Settings size={18}/> Settings</h3>
+          <button onClick={onClose} aria-label="Close settings" style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:T.textFaint,display:"inline-flex",alignItems:"center",justifyContent:"center"}}><Ic.Close size={18}/></button>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:16}}>
           <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>AI Provider <span style={{color:T.accent}}>*</span></label>
@@ -741,6 +1005,7 @@ function SettingsPanel({ onClose, onSaved }) {
               placeholder={provider==="openai"?"sk-...":"sk-ant-..."}
               style={{padding:"8px 11px",border:`1.5px solid ${T.border}`,borderRadius:T.r,fontFamily:"monospace",fontSize:12,color:T.text,background:T.bgCard,outline:"none"}}
               onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
+            <ProviderModelHint provider={provider}/>
           </>}
           <span style={{fontSize:10,color:T.textFaint}}>
             {provider==="openai"?<>Get yours at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style={{color:T.blue}}>platform.openai.com/api-keys ↗</a>.</>:provider==="anthropic"?<>Get yours at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{color:T.blue}}>console.anthropic.com/settings/keys ↗</a>.</>:<>Sign in with your GitHub account that has Copilot access — token stays on the server.</>}
@@ -786,20 +1051,13 @@ function ConnectScreen({onConnect}) {
   };
 
   return (
-    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,overflowY:"auto",padding:"20px 0"}}>
+    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,overflowY:"auto",padding:"20px 0",position:"relative",fontFamily:T.font}}>
+      <div style={{position:"fixed",top:14,right:14,zIndex:5}}><ThemeToggle/></div>
       <div style={{width:520,display:"flex",flexDirection:"column",gap:0}}>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{width:48,height:48,borderRadius:12,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px"}}>🧪</div>
-          <h1 style={{fontSize:22,fontWeight:700,color:T.navy,fontFamily:"Georgia,serif",margin:"0 0 6px"}}>QA Intelligence Hub</h1>
+          <div style={{width:48,height:48,borderRadius:12,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px",color:"#fff"}}><Ic.Beaker size={25}/></div>
+          <h1 style={{fontSize:T.fs.xxl,fontWeight:T.fw.bold,color:T.text,fontFamily:T.fontDisplay,margin:"0 0 6px"}}>QA Intelligence Hub</h1>
           <p style={{fontSize:13,color:T.textMuted,margin:0,lineHeight:1.6}}>Connect to Azure DevOps to browse work items, review stories, generate test cases, and research testing scope with AI.</p>
-        </div>
-
-        {/* How it works notice */}
-        <div style={{padding:"9px 12px",background:T.blueBg,border:`1px solid ${T.blueBd}`,borderRadius:T.r,fontSize:11,color:"#1e40af",lineHeight:1.7,marginBottom:14}}>
-          <strong>ℹ️ How connections work:</strong> Browser tools cannot call Azure DevOps directly due to CORS restrictions.
-          This tool automatically routes ADO requests through <strong>corsproxy.io</strong> (a trusted CORS proxy).
-          Your PAT is only sent over HTTPS and directly to dev.azure.com — the proxy forwards headers without logging them.
-          <a href="https://corsproxy.io" target="_blank" rel="noopener" style={{color:"#2563eb",marginLeft:4}}>Learn more ↗</a>
         </div>
 
         <div style={{background:T.bgCard,borderRadius:T.rLg,border:`1px solid ${T.border}`,padding:24,boxShadow:T.shMd,display:"flex",flexDirection:"column",gap:14}}>
@@ -823,7 +1081,7 @@ function ConnectScreen({onConnect}) {
 
           {usingProxy&&!err&&(
             <div style={{padding:"7px 10px",background:"#f0fdf4",border:"1px solid #86efac",borderRadius:T.r,fontSize:11,color:"#166534"}}>
-              ✓ Connected via CORS proxy (corsproxy.io) — this is normal for browser-based tools
+              ✓ Connected through bundled QAHub ADO proxy
             </div>
           )}
 
@@ -849,7 +1107,7 @@ function ConnectScreen({onConnect}) {
           )}
 
           <Btn variant="navy" onClick={handleTest} disabled={loading||!org||!pat} style={{width:"100%",justifyContent:"center"}}>
-            {loading?<Spin label="Connecting…"/>:"🔌 Connect & List Projects"}
+            {loading?<Spin label="Connecting…"/>:<><Ic.Plug size={14}/> Connect & List Projects</>}
           </Btn>
         </div>
 
@@ -882,14 +1140,14 @@ function WorkItemList({conn, items, loading, err, lastWiql, filters, setFilters,
       {/* Header */}
       <div style={{padding:"10px 12px",background:T.navy,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
-          <span style={{fontSize:16}}>🧪</span>
+          <span style={{fontSize:16,color:T.accent,display:"inline-flex"}}><Ic.Beaker size={16}/></span>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:12,fontWeight:700,color:"#eeedf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{conn.projectName}</div>
             <div style={{fontSize:9,color:"#5a5e7e"}}>{conn.org} {isProxyMode()&&<span style={{color:"#6fcf97",marginLeft:4}}>· via proxy</span>}</div>
           </div>
           <button onClick={()=>onFetch()} disabled={loading} title="Refresh"
             style={{background:"none",border:"1px solid #3d4468",borderRadius:5,padding:"3px 7px",cursor:"pointer",color:"#8890b0",fontSize:11}}>
-            {loading?"…":"↺"}
+            {loading?"…":<Ic.Refresh size={13}/>}
           </button>
         </div>
       </div>
@@ -952,7 +1210,7 @@ function WorkItemList({conn, items, loading, err, lastWiql, filters, setFilters,
           <Btn variant="navy" size="sm" style={{flex:1}} onClick={()=>onFetch()} disabled={loading}>
             {loading?<Spin label="Fetching…"/>:"Apply Filters"}
           </Btn>
-          <Btn variant="ghost" size="sm" onClick={onResetFilters} title="Clear all filters">✕ Reset</Btn>
+          <Btn variant="ghost" size="sm" onClick={onResetFilters} title="Clear all filters"><Ic.Close size={12}/> Reset</Btn>
           <button onClick={()=>setShowDebug(v=>!v)} style={{fontSize:10,color:T.textFaint,background:"none",border:"none",cursor:"pointer",padding:"0 4px"}}>SQL</button>
         </div>
       </div>
@@ -1076,8 +1334,8 @@ function ChatPanel({item}) {
 
   if (!item) return (
     <div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:T.textMuted,flexDirection:"column",gap:8,padding:24}}>
-      <span style={{fontSize:32}}>💬</span>
-      <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:"Georgia,serif"}}>AI Research Chat</div>
+      <span style={{fontSize:32,color:T.accent}}><Ic.Message size={32}/></span>
+      <div style={{fontSize:13,fontWeight:600,color:T.text,fontFamily:T.fontDisplay}}>AI Research Chat</div>
       <div style={{fontSize:12,textAlign:"center",maxWidth:260,lineHeight:1.7}}>Select a work item to start researching testing scope, risks, and edge cases with AI.</div>
     </div>
   );
@@ -1102,8 +1360,8 @@ function ChatPanel({item}) {
       <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:12}}>
         {messages.length===0&&(
           <div style={{textAlign:"center",padding:"32px 16px",color:T.textMuted}}>
-            <div style={{fontSize:28,marginBottom:8}}>🔬</div>
-            <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:6,fontFamily:"Georgia,serif"}}>Research #{item.id}: {item.title}</div>
+          <div style={{fontSize:28,marginBottom:8,color:T.accent}}><Ic.Microscope size={28}/></div>
+            <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:6,fontFamily:T.fontDisplay}}>Research #{item.id}: {item.title}</div>
             <div style={{fontSize:11,lineHeight:1.7,maxWidth:340,margin:"0 auto"}}>Ask anything about testing scope, risks, edge cases, or existing test coverage. Use the quick prompts above or type your own question.</div>
           </div>
         )}
@@ -1159,7 +1417,7 @@ function ChatPanel({item}) {
 function ReviewPanel({review, onApplyImproved, loading}) {
   const [tab,setTab]=useState("overview");
   if(loading) return <div style={{padding:32,textAlign:"center"}}><Spin label="Analyzing with Claude AI…" size={16}/></div>;
-  if(!review) return <div style={{padding:40,textAlign:"center",color:T.textMuted}}><div style={{fontSize:32,marginBottom:10}}>🔍</div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:"Georgia,serif",marginBottom:5}}>Review this work item</div><div style={{fontSize:12,maxWidth:280,margin:"0 auto",lineHeight:1.7}}>Click <strong>Review</strong> to score 8 quality dimensions and get improvement suggestions before generating test cases.</div></div>;
+  if(!review) return <div style={{padding:40,textAlign:"center",color:T.textMuted}}><div style={{fontSize:32,marginBottom:10,color:T.accent}}><Ic.Search size={32}/></div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:T.fontDisplay,marginBottom:5}}>Review this work item</div><div style={{fontSize:12,maxWidth:280,margin:"0 auto",lineHeight:1.7}}>Click <strong>Review</strong> to score 8 quality dimensions and get improvement suggestions before generating test cases.</div></div>;
   const sc=review.score; const scC=sc>=8?T.green:sc>=6?T.amber:T.red;
   const sv={critical:T.red,major:T.amber,minor:T.textMuted};
   const DL={persona:"👤 Persona",action:"⚡ Action",value:"💡 Value",acceptanceCriteria:"✅ Acceptance Criteria",scope:"📐 Scope",edgeCases:"🔀 Edge Cases",nonFunctional:"⚙ Non-Functional",testData:"🗃 Test Data"};
@@ -1168,7 +1426,7 @@ function ReviewPanel({review, onApplyImproved, loading}) {
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:12,background:T.bgCard,flexShrink:0}}>
         <div style={{width:52,height:52,borderRadius:"50%",border:`3px solid ${scC}`,display:"flex",alignItems:"center",justifyContent:"center",background:scC+"12",flexShrink:0}}>
-          <span style={{fontSize:18,fontWeight:700,color:scC,fontFamily:"Georgia,serif"}}>{sc}</span>
+          <span style={{fontSize:18,fontWeight:700,color:scC,fontFamily:T.fontDisplay}}>{sc}</span>
         </div>
         <div style={{flex:1}}>
           <div style={{fontSize:12,color:T.text,lineHeight:1.6,marginBottom:4}}>{review.summary}</div>
@@ -1204,7 +1462,7 @@ function ReviewPanel({review, onApplyImproved, loading}) {
         </div>}
         {tab==="improve"&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:T.textMuted}}>AI-rewritten version:</span><Btn variant="success" size="sm" onClick={()=>onApplyImproved(review.improvedVersion)}>↓ Apply</Btn></div>
-          <div style={{background:T.bgMuted,borderRadius:T.rLg,padding:14,fontSize:12,color:T.text,lineHeight:1.8,whiteSpace:"pre-wrap",border:`1px solid ${T.border}`,fontFamily:"Georgia,serif"}}>{review.improvedVersion}</div>
+          <div style={{background:T.bgMuted,borderRadius:T.rLg,padding:14,fontSize:12,color:T.text,lineHeight:1.8,whiteSpace:"pre-wrap",border:`1px solid ${T.border}`,fontFamily:T.font}}>{review.improvedVersion}</div>
         </div>}
         {tab==="dims"&&Object.entries(review.dimensions||{}).map(([k,d])=>{const c=d.score===3?T.green:d.score===2?T.amber:T.red;return(
           <div key={k} style={{marginBottom:12}}>
@@ -1222,7 +1480,7 @@ function TCPanel({testCases, loading, onExportCSV, onExportJSON, onPostAdo}) {
   const [cat,setCat]=useState("All"); const [expSet,setExpSet]=useState(()=>new Set()); const [copied,setCopied]=useState(null);
   const toggleExp=(id)=>setExpSet(prev=>{ const n=new Set(prev); if(n.has(id)) n.delete(id); else n.add(id); return n; });
   if(loading) return <div style={{padding:32,textAlign:"center"}}><Spin label="Generating test cases…" size={16}/></div>;
-  if(!testCases) return <div style={{padding:40,textAlign:"center",color:T.textMuted}}><div style={{fontSize:32,marginBottom:10}}>🧪</div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:"Georgia,serif",marginBottom:5}}>No test cases yet</div><div style={{fontSize:12,maxWidth:280,margin:"0 auto",lineHeight:1.7}}>Review the story first (score ≥ 7), then click <strong>Generate Test Cases</strong>.</div></div>;
+  if(!testCases) return <div style={{padding:40,textAlign:"center",color:T.textMuted}}><div style={{fontSize:32,marginBottom:10,color:T.accent}}><Ic.Beaker size={32}/></div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:T.fontDisplay,marginBottom:5}}>No test cases yet</div><div style={{fontSize:12,maxWidth:280,margin:"0 auto",lineHeight:1.7}}>Review the story first (score ≥ 7), then click <strong>Generate Test Cases</strong>.</div></div>;
   const CATS=["All","Functional","Negative","Edge Case","Security","Performance","Accessibility"];
   const pc={Critical:T.red,High:T.amber,Medium:T.green,Low:T.textFaint};
   const auto=testCases.testCases?.filter(t=>t.automatable).length||0;
@@ -1237,7 +1495,7 @@ function TCPanel({testCases, loading, onExportCSV, onExportJSON, onPostAdo}) {
         <div style={{marginLeft:"auto",display:"flex",gap:4}}>
           <Btn variant="ghost" size="sm" onClick={()=>setExpSet(new Set((testCases.testCases||[]).map(t=>t.id)))}>Expand all</Btn>
           <Btn variant="ghost" size="sm" onClick={()=>setExpSet(new Set())}>Collapse all</Btn>
-          {onPostAdo&&<Btn variant="navy" size="sm" onClick={onPostAdo}>📤 Post to ADO</Btn>}
+          {onPostAdo&&<Btn variant="navy" size="sm" onClick={onPostAdo}><Ic.Send size={13}/> Post to ADO</Btn>}
           <Btn variant="ghost" size="sm" onClick={onExportCSV}>⬇ CSV</Btn>
           <Btn variant="ghost" size="sm" onClick={onExportJSON}>⬇ JSON</Btn>
         </div>
@@ -1277,7 +1535,7 @@ function TCPanel({testCases, loading, onExportCSV, onExportJSON, onPostAdo}) {
 function CoverageAgentPanel({coverage, loading}) {
   const [tab,setTab]=useState("summary");
   if(loading) return <div style={{padding:32,textAlign:"center"}}><Spin label="Running Steel QA Coverage Agent…" size={16}/></div>;
-  if(!coverage) return <div style={{padding:40,textAlign:"center",color:T.textMuted}}><div style={{fontSize:32,marginBottom:10}}>🏭</div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:"Georgia,serif",marginBottom:5}}>No coverage analysis yet</div><div style={{fontSize:12,maxWidth:360,margin:"0 auto",lineHeight:1.7}}>Click <strong>Run Coverage Agent</strong> to analyze the ADO item, compare loaded similar functionality, score requirements, and generate steel-domain test coverage.</div></div>;
+  if(!coverage) return <div style={{padding:40,textAlign:"center",color:T.textMuted}}><div style={{fontSize:32,marginBottom:10,color:T.accent}}><Ic.Factory size={32}/></div><div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:T.fontDisplay,marginBottom:5}}>No coverage analysis yet</div><div style={{fontSize:12,maxWidth:360,margin:"0 auto",lineHeight:1.7}}>Click <strong>Run Coverage Agent</strong> to analyze the ADO item, compare loaded similar functionality, score requirements, and generate steel-domain test coverage.</div></div>;
   const q=coverage.requirementQualityScore||{};
   const fs=coverage.featureSummary||{};
   const rec=coverage.finalQARecommendation||{};
@@ -1288,9 +1546,9 @@ function CoverageAgentPanel({coverage, loading}) {
   const ScoreRow=({label,value})=><div style={{display:"grid",gridTemplateColumns:"160px 1fr 34px",gap:8,alignItems:"center",fontSize:11}}><span style={{color:T.textMuted}}>{label}</span><div style={{height:5,background:T.bgMuted,borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.min(Number(value)||0,10)*10}%`,background:(value>=8?T.green:value>=6?T.amber:T.red)}}/></div><b style={{color:T.text}}>{value||0}</b></div>;
   return <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
     <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,background:T.bgCard,display:"flex",gap:12,alignItems:"center",flexShrink:0}}>
-      <div style={{width:58,height:58,borderRadius:"50%",border:`3px solid ${scoreColor}`,display:"flex",alignItems:"center",justifyContent:"center",background:scoreColor+"12",flexShrink:0}}><span style={{fontSize:17,fontWeight:800,color:scoreColor,fontFamily:"Georgia,serif"}}>{score}</span></div>
+      <div style={{width:58,height:58,borderRadius:"50%",border:`3px solid ${scoreColor}`,display:"flex",alignItems:"center",justifyContent:"center",background:scoreColor+"12",flexShrink:0}}><span style={{fontSize:17,fontWeight:800,color:scoreColor,fontFamily:T.fontDisplay}}>{score}</span></div>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:13,fontWeight:700,color:T.navy,fontFamily:"Georgia,serif",marginBottom:3}}>{fs.featureName||"Coverage analysis"}</div>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.fontDisplay,marginBottom:3}}>{fs.featureName||"Coverage analysis"}</div>
         <div style={{fontSize:11,color:T.textMuted,lineHeight:1.55}}>{fs.functionalitySummary||rec.reason||"Steel-domain QA coverage generated from ADO context."}</div>
         <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
           <span style={{fontSize:10,fontWeight:700,color:scoreColor,background:scoreColor+"14",border:`1px solid ${scoreColor}55`,borderRadius:T.rFull,padding:"2px 8px"}}>{q.qaReadinessStatus||"Unscored"}</span>
@@ -1364,7 +1622,7 @@ function WorkItemDetail({item, qaData, onUpdateQA, conn, allItems, hasAI, onOpen
     setErr(null);setRLoading(true);setTab("review");
     try{
       const prompt=`TITLE: ${item.title}\nTYPE: ${item.type}\nPRIORITY: ${item.priority}\nSTATE: ${item.state}\n\nSTORY CONTENT:\n${editContent||item.description}\n\nACCEPTANCE CRITERIA:\n${editAC||"(none)"}\n\nNOTES:\n${notes||"(none)"}`;
-      const r=await callClaudeJSON(REVIEW_SYS,prompt);
+      const r=await callClaudeJSON(REVIEW_SYS,prompt,5000,"review");
       onUpdateQA({...qaRef.current,review:r,status:r.readyForTesting?"ready":"reviewed",updatedAt:now()});
     }catch(e){setErr(e.message);}
     setRLoading(false);
@@ -1377,7 +1635,7 @@ function WorkItemDetail({item, qaData, onUpdateQA, conn, allItems, hasAI, onOpen
     try{
       const rev=qaData.review;
       const prompt=`TITLE: ${item.title}\nTYPE: ${item.type}\n\nSTORY:\n${editContent||item.description}\n\nACCEPTANCE CRITERIA:\n${editAC||""}\n\nNOTES:\n${notes||""}\n\nREVIEW SCORE: ${rev.score}/10\nSUMMARY: ${rev.summary}\nWEAK AREAS: ${Object.entries(rev.dimensions||{}).filter(([,d])=>d.score<3).map(([k,d])=>`${k}(${d.comment})`).join("; ")||"none"}`;
-      const r=await callClaudeJSON(TC_SYS,prompt,8000);
+      const r=await callClaudeJSON(TC_SYS,prompt,9000,"tests");
       onUpdateQA({...qaRef.current,testCases:r,status:"generated",updatedAt:now()});
     }catch(e){setErr(e.message);}
     setTcLoading(false);
@@ -1410,7 +1668,7 @@ ${notes||"(none)"}
 
 LOADED ADO CONTEXT:
 ${JSON.stringify(context,null,2)}`;
-      const r=await callClaudeJSON(COVERAGE_SYS,prompt,7000);
+      const r=await callClaudeJSON(COVERAGE_SYS,prompt,10000,"coverage");
       onUpdateQA({...qaRef.current,coverage:r,status:"coverage",updatedAt:now()});
     }catch(e){setErr(e.message);}
     setCovLoading(false);
@@ -1444,11 +1702,11 @@ ${JSON.stringify(context,null,2)}`;
 
   if(!item) return <div style={{height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10,color:T.textMuted,padding:40}}>
     <span style={{fontSize:40}}>←</span>
-    <div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:"Georgia,serif"}}>Select a work item</div>
+    <div style={{fontSize:14,fontWeight:600,color:T.text,fontFamily:T.fontDisplay}}>Select a work item</div>
     <div style={{fontSize:12,textAlign:"center",maxWidth:280,lineHeight:1.7}}>Choose any work item from the list to view details, run AI analysis, generate test cases, and research testing scope.</div>
   </div>;
 
-  const tS=t=>({padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",border:"none",background:tab===t?T.bgCard:"transparent",color:tab===t?T.accent:T.textMuted,borderBottom:tab===t?`2px solid ${T.accent}`:"2px solid transparent",transition:"all 0.15s"});
+  const tS=t=>({padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",border:"none",background:tab===t?T.bgCard:"transparent",color:tab===t?T.accent:T.textMuted,borderBottom:tab===t?`2px solid ${T.accent}`:"2px solid transparent",transition:"all 0.15s",display:"inline-flex",alignItems:"center",gap:6,whiteSpace:"nowrap"});
 
   // Merge item with qaData
   const mergedItem = {...item, editedContent:editContent, acceptanceCriteria:editAC, notes};
@@ -1466,18 +1724,18 @@ ${JSON.stringify(context,null,2)}`;
           <div style={{marginLeft:"auto",display:"flex",gap:5,flexShrink:0}}>
             {err&&<span style={{fontSize:11,color:T.red,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis"}} title={err}>{err}</span>}
             {adoMsg&&<span style={{fontSize:11,color:adoMsg.ok?T.green:T.red,fontWeight:500}}>{adoMsg.ok?"✓":"✗"} {adoMsg.msg}</span>}
-            <Btn variant={hasAI?"ghost":"amber"} size="sm" onClick={onOpenSettings}>{hasAI?"⚙ AI Settings":"🔑 Add AI Key"}</Btn>
-            {conn&&<Btn variant="ghost" size="sm" onClick={handlePostAdo}>📤 ADO</Btn>}
-            <Btn variant="secondary" size="sm" onClick={handleReview} disabled={rLoading||tcLoading||covLoading}>🔍 Review</Btn>
+            <Btn variant={hasAI?"ghost":"amber"} size="sm" onClick={onOpenSettings}>{hasAI?<><Ic.Settings size={13}/> AI Settings</>:<>Add AI Key</>}</Btn>
+            {conn&&<Btn variant="ghost" size="sm" onClick={handlePostAdo}><Ic.Send size={13}/> ADO</Btn>}
+            <Btn variant="secondary" size="sm" onClick={handleReview} disabled={rLoading||tcLoading||covLoading}><Ic.Search size={13}/> Review</Btn>
             <Btn variant="amber" size="sm" onClick={handleCoverageAgent} disabled={rLoading||tcLoading||covLoading}>
-              {covLoading?"Analyzing…":"🏭 Run Coverage Agent"}
+              {covLoading?"Analyzing…":<><Ic.Factory size={13}/> Run Coverage Agent</>}
             </Btn>
             <Btn variant={qaData?.review?.readyForTesting?"violet":"ghost"} size="sm" onClick={handleGenTC} disabled={tcLoading||rLoading||covLoading||!qaData?.review?.readyForTesting} title={!qaData?.review?.readyForTesting?"Review first, score ≥ 7 required":""}>
-              {tcLoading?"Generating…":"🧪 Generate Tests"}
+              {tcLoading?"Generating…":<><Ic.Beaker size={13}/> Generate Tests</>}
             </Btn>
           </div>
         </div>
-        <div style={{fontSize:14,fontWeight:700,color:T.navy,fontFamily:"Georgia,serif",lineHeight:1.3}}>{item.title}</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.text,fontFamily:T.fontDisplay,lineHeight:1.3}}>{item.title}</div>
         <div style={{display:"flex",gap:10,marginTop:4,flexWrap:"wrap"}}>
           {item.assignedTo&&<span style={{fontSize:10,color:T.textMuted}}>👤 {item.assignedTo}</span>}
           {item.iterationPath&&<span style={{fontSize:10,color:T.textMuted}}>🗓 {item.iterationPath.split("\\").pop()}</span>}
@@ -1488,11 +1746,11 @@ ${JSON.stringify(context,null,2)}`;
 
       {/* Tabs */}
       <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,background:T.bgMuted,flexShrink:0}}>
-        <button style={tS("chat")}     onClick={()=>setTab("chat")}>💬 AI Research</button>
-        <button style={tS("details")}  onClick={()=>setTab("details")}>📄 Details</button>
-        <button style={tS("coverage")} onClick={()=>setTab("coverage")}>🏭 Coverage {qaData?.coverage?.requirementQualityScore?.overallScore?`· ${qaData.coverage.requirementQualityScore.overallScore}`:""}</button>
-        <button style={tS("review")}   onClick={()=>setTab("review")}>🔍 Review {qaData?.review?`· ${qaData.review.score}/10`:""}</button>
-        <button style={tS("tests")}    onClick={()=>setTab("tests")}>🧪 Tests {qaData?.testCases?`· ${qaData.testCases.testCases?.length}`:""}</button>
+        <button style={tS("chat")}     onClick={()=>setTab("chat")}><Ic.Message size={13}/> AI Research</button>
+        <button style={tS("details")}  onClick={()=>setTab("details")}><Ic.FileText size={13}/> Details</button>
+        <button style={tS("coverage")} onClick={()=>setTab("coverage")}><Ic.Factory size={13}/> Coverage {qaData?.coverage?.requirementQualityScore?.overallScore?`· ${qaData.coverage.requirementQualityScore.overallScore}`:""}</button>
+        <button style={tS("review")}   onClick={()=>setTab("review")}><Ic.Search size={13}/> Review {qaData?.review?`· ${qaData.review.score}/10`:""}</button>
+        <button style={tS("tests")}    onClick={()=>setTab("tests")}><Ic.Beaker size={13}/> Tests {qaData?.testCases?`· ${qaData.testCases.testCases?.length}`:""}</button>
       </div>
 
       {/* Tab content */}
@@ -1558,7 +1816,7 @@ function MarkdownView({text}) {
         <div key={p.k} style={{position:"relative",margin:"8px 0",border:`1px solid ${T.border}`,borderRadius:T.r,overflow:"hidden"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 10px",background:"#f8fafc",fontSize:10,color:T.textMuted,fontFamily:"monospace"}}>
             <span>{p.lang||"code"}</span>
-            <button onClick={()=>navigator.clipboard?.writeText(p.content)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.blue}}>📋 Copy</button>
+            <button onClick={()=>navigator.clipboard?.writeText(p.content)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.blue,display:"inline-flex",alignItems:"center",gap:4}}><Ic.Copy size={12}/> Copy</button>
           </div>
           <pre style={{margin:0,padding:"10px 12px",background:"#0f172a",color:"#e2e8f0",fontSize:12,fontFamily:"monospace",overflow:"auto"}}><code>{p.content}</code></pre>
         </div>
@@ -1702,14 +1960,14 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
     <div style={{position:"fixed",top:0,right:0,bottom:0,width:460,background:T.bgCard,borderLeft:`1px solid ${T.border}`,boxShadow:"-12px 0 32px rgba(0,0,0,0.08)",display:"flex",flexDirection:"column",zIndex:990}}>
       {/* Header */}
       <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8}}>
-        <span style={{fontSize:16}}>🤖</span>
+        <span style={{fontSize:16,color:T.accent,display:"inline-flex"}}><Ic.Bot size={16}/></span>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.navy,fontFamily:"Georgia,serif"}}>QAHub Copilot</div>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,fontFamily:T.fontDisplay}}>QAHub Copilot</div>
           <div style={{fontSize:10,color:T.textFaint,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
             {contextItem ? `#${contextItem.id} ${contextItem.title}` : "No work item selected"}
           </div>
         </div>
-        <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:T.textFaint}} title="Close">✕</button>
+        <button onClick={onClose} aria-label="Close Copilot" style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:T.textFaint,display:"inline-flex",alignItems:"center",justifyContent:"center"}} title="Close"><Ic.Close size={18}/></button>
       </div>
 
       {/* Provider/model row */}
@@ -1740,7 +1998,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
           <span style={{fontWeight:700}}>Agent</span>
         </label>
         <button onClick={()=>{ setMessages([]); setErr(null); }} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.blue}}>Clear</button>
-        <button onClick={onOpenSettings} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted}}>⚙</button>
+        <button onClick={onOpenSettings} aria-label="Open AI settings" style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted,display:"inline-flex",alignItems:"center"}}><Ic.Settings size={14}/></button>
       </div>
 
       {/* Messages */}
@@ -1773,7 +2031,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
               <MarkdownView text={m.content || (loading && i===messages.length-1 && !(m.toolCalls||[]).length ? "▍" : "")}/>
               {m.role==="assistant" && !loading && m.content && (
                 <div style={{display:"flex",gap:8,marginTop:4}}>
-                  <button onClick={()=>navigator.clipboard?.writeText(m.content)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted}}>📋 Copy</button>
+                  <button onClick={()=>navigator.clipboard?.writeText(m.content)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted,display:"inline-flex",alignItems:"center",gap:4}}><Ic.Copy size={12}/> Copy</button>
                   {i===messages.length-1 && (
                     <button onClick={()=>send(null,true)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted}}>↻ Regenerate</button>
                   )}
@@ -1794,8 +2052,8 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
             rows={2}
             style={{flex:1,resize:"none",padding:"8px 10px",border:`1px solid ${T.border}`,borderRadius:T.r,fontSize:12,fontFamily:"inherit",outline:"none",background:T.bgCard,color:T.text}}/>
           {loading
-            ? <button onClick={stop} style={{padding:"8px 12px",border:`1px solid ${T.accent}`,background:"#fff",color:T.accent,borderRadius:T.r,cursor:"pointer",fontSize:12,fontWeight:700}}>■ Stop</button>
-            : <button onClick={()=>send()} disabled={!input.trim()} style={{padding:"8px 14px",border:"none",background:input.trim()?T.blue:T.border,color:"#fff",borderRadius:T.r,cursor:input.trim()?"pointer":"default",fontSize:12,fontWeight:700}}>Send</button>}
+            ? <button onClick={stop} style={{padding:"8px 12px",border:`1px solid ${T.accent}`,background:T.bgCard,color:T.accent,borderRadius:T.r,cursor:"pointer",fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:5}}><Ic.Stop size={12}/> Stop</button>
+            : <button onClick={()=>send()} disabled={!input.trim()} style={{padding:"8px 14px",border:"none",background:input.trim()?T.blue:T.border,color:"#fff",borderRadius:T.r,cursor:input.trim()?"pointer":"default",fontSize:12,fontWeight:700,display:"inline-flex",alignItems:"center",gap:5}}>Send <Ic.Send size={13}/></button>}
         </div>
       </div>
     </div>
@@ -1804,6 +2062,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
 
 export default function App() {
   migrateProviderOnce();
+  useTheme();
   const [conn,    setConn]    = useState(null);
   const [items,   setItems]   = useState([]);
   const [qaStore, setQaStore] = useState({});   // keyed by work item ID
@@ -1823,7 +2082,7 @@ export default function App() {
   useEffect(()=>{
     loadDB().then(db=>{
       if(db){
-        if(db.conn)     setConn(db.conn);
+        if(db.conn?.pat) setConn(db.conn);
         if(db.qaStore)  setQaStore(db.qaStore);
         if(db.filters)  setFilters(db.filters);
       }
@@ -1835,6 +2094,23 @@ export default function App() {
   useEffect(()=>{
     if(!booting) saveDB({conn,qaStore,filters});
   },[conn,qaStore,filters,booting]);
+
+  // Keep PAT in memory only and clear it after inactivity.
+  useEffect(()=>{
+    if(!conn?.pat) return;
+    let t;
+    const arm = () => {
+      clearTimeout(t);
+      t = setTimeout(()=>setConn(c=>c?.pat ? null : c), 30 * 60 * 1000);
+    };
+    const events = ["click","keydown","mousemove","touchstart"];
+    events.forEach(e=>window.addEventListener(e, arm, { passive:true }));
+    arm();
+    return () => {
+      clearTimeout(t);
+      events.forEach(e=>window.removeEventListener(e, arm));
+    };
+  },[conn?.pat]);
 
   // Load area/iter paths when connected
   useEffect(()=>{
@@ -1880,7 +2156,7 @@ export default function App() {
   };
 
   if(booting) return (
-    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:"Georgia,serif",fontSize:14,color:T.textMuted}}>
+    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font,fontSize:14,color:T.textMuted}}>
       <Spin label="Loading…" size={16}/>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
@@ -1894,7 +2170,7 @@ export default function App() {
   );
 
   return (
-    <div style={{height:"100vh",display:"grid",gridTemplateColumns:"300px 1fr",overflow:"hidden",background:T.bg,fontFamily:"-apple-system,'Segoe UI',sans-serif"}}>
+    <div style={{height:"100vh",display:"grid",gridTemplateColumns:"300px 1fr",overflow:"hidden",background:T.bg,color:T.text,fontFamily:T.font}}>
       {showSettings && <SettingsPanel onClose={()=>setShowSettings(false)} onSaved={setHasAI}/>} 
       <GlobalCopilotPanel
         open={showCopilot}
@@ -1906,8 +2182,9 @@ export default function App() {
       {/* Floating launcher */}
       <button onClick={()=>setShowCopilot(v=>!v)}
         title={showCopilot?"Close Copilot":"Open Copilot Chat"}
-        style={{position:"fixed",bottom:18,right:18,zIndex:980,width:48,height:48,borderRadius:"50%",border:"none",background:T.navy,color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 6px 18px rgba(0,0,0,0.18)"}}>
-        {showCopilot?"✕":"🤖"}
+        aria-label={showCopilot?"Close Copilot":"Open Copilot Chat"}
+        style={{position:"fixed",bottom:18,right:18,zIndex:980,width:48,height:48,borderRadius:"50%",border:"none",background:T.navy,color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 6px 18px rgba(0,0,0,0.18)",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>
+        {showCopilot?<Ic.Close size={20}/>:<Ic.Bot size={21}/>}
       </button>
       {/* Left — Work Item List */}
       <div style={{borderRight:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
@@ -1918,12 +2195,13 @@ export default function App() {
           areas={areas} iters={iters}
           selectedId={selId} onSelect={item=>setSelId(item.id)}/>
         {/* Disconnect footer */}
-        <div style={{padding:"6px 10px",borderTop:`1px solid ${T.border}`,background:T.bgMuted,flexShrink:0,display:"flex",gap:6}}>
+        <div style={{padding:"6px 10px",borderTop:`1px solid ${T.border}`,background:T.bgMuted,flexShrink:0,display:"flex",gap:6,alignItems:"center"}}>
           <button onClick={disconnect} style={{flex:1,fontSize:10,color:T.textFaint,background:"none",border:"none",cursor:"pointer",textAlign:"left",padding:"2px 0"}}>
             ⟵ Disconnect / switch project
           </button>
-          <button onClick={()=>setShowSettings(true)} style={{fontSize:11,color:T.textMuted,background:"none",border:`1px solid ${T.border}`,borderRadius:T.r,padding:"2px 8px",cursor:"pointer"}} title="API Key Settings">
-            ⚙
+          <ThemeToggle/>
+          <button onClick={()=>setShowSettings(true)} style={{height:32,width:32,color:T.textMuted,background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:T.r,padding:0,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}} title="API Key Settings" aria-label="API key settings">
+            <Ic.Settings size={14}/>
           </button>
         </div>
       </div>
