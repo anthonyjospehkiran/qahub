@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "description": "QAHub golden set for steel-manufacturing QA accuracy checks. Synthetic but domain-shaped; replace/add real approved ADO examples as they become available.",
+  "items": [
+    {
+      "id": "golden-a572-yield-retest",
+      "title": "Flag out-of-spec A572 Grade 50 tensile result and route for QA disposition",
+      "type": "User Story",
+      "description": "As a lab tech, I need the MTR review screen to flag a coil sample when yield strength is below the grade requirement so that the heat can be held for metallurgical disposition.",
+      "acceptanceCriteria": [
+        "Given a coil sample for ASTM A572 Grade 50 with yield 49.2 ksi, tensile 67 ksi, elongation 20%, when the result is saved, then the system flags the yield failure.",
+        "The user sees the heat number, coil id, sample id, and MTR id in the disposition message.",
+        "The system must not mark the MTR as releasable until QA disposition is recorded."
+      ],
+      "expected": {
+        "requiredReviewFindings": [
+          "yield below min",
+          "hold",
+          "QA disposition",
+          "heat",
+          "coil",
+          "sample",
+          "MTR"
+        ],
+        "requiredTestCategories": ["Functional", "Negative", "Regression"],
+        "steelEvaluation": {
+          "grade": "A572 Grade 50",
+          "results": { "yield": 49.2, "tensile": 67, "elongation": 20, "strengthUnit": "ksi" },
+          "pass": false,
+          "failedIncludes": ["yield"]
+        },
+        "traceability": {
+          "record": {
+            "heatNumber": "H456789",
+            "coilId": "C456789-02",
+            "sampleId": "S456789-YT-01",
+            "mtrId": "MTR-456789"
+          },
+          "valid": true
+        }
+      }
+    },
+    {
+      "id": "golden-abs-dh36-charpy",
+      "title": "Validate ABS DH36 Charpy energy and temperature units",
+      "type": "Feature",
+      "description": "The QA system must evaluate ABS DH36 Charpy results that may arrive in joules/Celsius or ft-lb/Fahrenheit and show the normalized pass/fail result.",
+      "acceptanceCriteria": [
+        "Given ABS DH36 with Charpy 28 J at -20 C, then the feature fails energy below the 34 J minimum.",
+        "Given ABS DH36 with Charpy 37 J at -20 C, then the feature passes Charpy energy and temperature.",
+        "The UI must show the original units and normalized units."
+      ],
+      "expected": {
+        "requiredReviewFindings": ["unit", "Charpy", "energy", "temperature", "normalized"],
+        "requiredTestCategories": ["Functional", "Edge Case", "Negative"],
+        "steelEvaluation": {
+          "grade": "ABS DH36",
+          "results": { "yield": 52, "tensile": 74, "elongation": 22, "strengthUnit": "ksi", "charpyEnergy": 28, "impactEnergyUnit": "J", "charpyTemperature": -20, "temperatureUnit": "C" },
+          "pass": false,
+          "failedIncludes": ["charpyEnergy"]
+        },
+        "traceability": {
+          "record": {
+            "heatNumber": "H-DH36-1001",
+            "coilId": "PLATE-DH36-77",
+            "sampleId": "CVN-DH36-77-A",
+            "mtrId": "MTR-DH36-77",
+            "sampleHeatNumber": "H-DH36-1002"
+          },
+          "valid": false,
+          "warningIncludes": ["sampleHeatNumber"]
+        }
+      }
+    },
+    {
+      "id": "golden-a992-yield-max",
+      "title": "Prevent A992 shape certification when yield exceeds maximum",
+      "type": "Bug",
+      "description": "A992 shape certification currently checks only minimum yield. It must also enforce the maximum yield requirement before generating the MTR.",
+      "acceptanceCriteria": [
+        "Given ASTM A992 with yield 68 ksi, tensile 76 ksi, elongation 20%, then the system fails the result because yield exceeds the maximum.",
+        "The generated test cases include a regression case for existing minimum-yield pass behavior.",
+        "The MTR export button remains disabled when the spec evaluator returns failedProperties."
+      ],
+      "expected": {
+        "requiredReviewFindings": ["yield", "maximum", "MTR", "disabled", "regression"],
+        "requiredTestCategories": ["Functional", "Negative", "Regression"],
+        "steelEvaluation": {
+          "grade": "A992",
+          "results": { "yield": 68, "tensile": 76, "elongation": 20, "strengthUnit": "ksi" },
+          "pass": false,
+          "failedIncludes": ["yield"]
+        },
+        "traceability": {
+          "record": {
+            "heatNumber": "H992-2026-04",
+            "coilId": "SHAPE-W14-992",
+            "sampleId": "TENS-992-04",
+            "mtrId": "MTR-992-04",
+            "mtrHeatNumber": "H992-2026-04"
+          },
+          "valid": true
+        }
+      }
+    }
+  ]
+}

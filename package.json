@@ -12,6 +12,7 @@
                     "build":  "vite build",
                     "preview":  "vite preview",
                     "server":  "node server.js",
+                    "eval":  "node evals/run-evals.mjs",
                     "start":  "node server.js",
                     "postinstall":  "vite build || echo \"skip build (dev install)\""
                 },
