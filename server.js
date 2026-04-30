@@ -219,7 +219,22 @@ app.all('/api/ado', async (req, res) => {
       },
       body: ['POST', 'PUT', 'PATCH'].includes(req.method) ? JSON.stringify(req.body) : undefined,
     });
-    const data = await upstream.json();
+    const text = await upstream.text();
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        const preview = text.replace(/\s+/g, ' ').slice(0, 240);
+        return res.status(upstream.status || 502).json({
+          error: upstream.status === 401
+            ? 'Azure DevOps rejected the PAT or returned its sign-in page. Verify the PAT has Work Items: Read access for this organization.'
+            : 'Azure DevOps returned non-JSON content.',
+          status: upstream.status,
+          preview,
+        });
+      }
+    }
     res.status(upstream.status).json(data);
   } catch (err) {
     res.status(502).json({ error: `ADO proxy error: ${err.message}` });

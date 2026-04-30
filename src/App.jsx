@@ -278,7 +278,7 @@ async function _rawFetch(url, pat, opts) {
     if (res.status===401) throw new Error("Unauthorized (401) — PAT expired or missing Work Items: Read scope.");
     if (res.status===403) throw new Error("Forbidden (403) — PAT lacks access to this project.");
     if (res.status===404) throw new Error("Not found (404) — verify org name and project name are correct.");
-    throw new Error(b.message || b.errorCode || `ADO error ${res.status}`);
+    throw new Error(b.message || b.error || b.errorCode || `ADO error ${res.status}`);
   }
   return b;
 }
@@ -1046,6 +1046,9 @@ function ConnectScreen({onConnect}) {
   const [projs,setProjs]=useState([]); const [loading,setLoading]=useState(false);
   const [err,setErr]=useState(null); const [tested,setTested]=useState(false);
   const [usingProxy,setUsingProxy]=useState(false);
+  const [showSettings,setShowSettings]=useState(false);
+  const [hasAI,setHasAI]=useState(hasAIConfig());
+  const [previewMode,setPreviewMode]=useState("flows");
 
   const handleTest=async()=>{
     if(!org||!pat){setErr("Both fields required.");return;}
@@ -1067,13 +1070,14 @@ function ConnectScreen({onConnect}) {
 
   return (
     <div style={{height:"100vh",display:"grid",gridTemplateRows:"46px minmax(0,1fr) 28px",gridTemplateColumns:"48px 360px minmax(0,1fr) 280px",overflow:"hidden",background:T.bg,color:T.text,fontFamily:T.font}}>
+      {showSettings && <SettingsPanel onClose={()=>setShowSettings(false)} onSaved={setHasAI}/>}
       <div style={{gridColumn:"1 / -1",gridRow:1,display:"flex",alignItems:"center",gap:10,padding:"0 12px",borderBottom:`1px solid ${T.border}`,background:T.bgCard}}>
         <div style={{width:28,height:28,borderRadius:T.r,background:T.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic.Beaker size={16}/></div>
         <div style={{fontSize:13,fontWeight:800}}>QAHub Studio</div>
         <span style={{fontSize:11,color:T.textFaint}}>Azure DevOps quality automation workspace</span>
         <div style={{marginLeft:"auto"}}><ThemeToggle/></div>
       </div>
-      <StudioRail active="flows" onChange={()=>{}} onOpenCopilot={()=>{}} onOpenSettings={()=>{}}/>
+      <StudioRail active={previewMode} onChange={setPreviewMode} onOpenCopilot={()=>setShowSettings(true)} onOpenSettings={()=>setShowSettings(true)}/>
       <div style={{gridColumn:2,gridRow:2,minHeight:0,overflow:"auto",borderRight:`1px solid ${T.border}`,background:T.bgCard,padding:16}}>
         <div style={{textAlign:"center",marginBottom:20}}>
           <div style={{width:48,height:48,borderRadius:12,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px",color:"#fff"}}><Ic.Beaker size={25}/></div>
@@ -1140,24 +1144,31 @@ function ConnectScreen({onConnect}) {
       <main style={{gridColumn:3,gridRow:2,minHeight:0,overflow:"hidden",padding:10,background:`linear-gradient(${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), linear-gradient(90deg, ${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), ${T.bg}`,backgroundSize:"24px 24px"}}>
         <div style={{height:"100%",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,boxShadow:T.sh,display:"flex",flexDirection:"column",overflow:"hidden"}}>
           <div style={{height:42,padding:"0 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8,background:T.bgMuted}}>
-            <Ic.Layers size={15}/>
-            <div style={{fontSize:12,fontWeight:800}}>Studio Preview</div>
+            {previewMode==="quality"?<Ic.Beaker size={15}/>:previewMode==="coverage"?<Ic.Factory size={15}/>:previewMode==="ai"?<Ic.Bot size={15}/>:<Ic.Layers size={15}/>}
+            <div style={{fontSize:12,fontWeight:800}}>{previewMode==="quality"?"Quality Queue":previewMode==="coverage"?"Coverage Inspector":previewMode==="ai"?"AI Provider Setup":"Studio Preview"}</div>
             <span style={{fontSize:11,color:T.textFaint}}>Connect to load real Azure DevOps flows</span>
           </div>
           <div style={{flex:1,display:"grid",placeItems:"center",padding:28,textAlign:"center"}}>
             <div style={{maxWidth:560}}>
-              <div style={{width:56,height:56,borderRadius:T.r,background:T.accentLight,color:T.accent,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:14}}><Ic.Factory size={28}/></div>
-              <h2 style={{fontSize:24,margin:"0 0 8px",fontWeight:800}}>QAHub Studio</h2>
-              <p style={{fontSize:13,color:T.textMuted,lineHeight:1.7,margin:"0 0 16px"}}>A structured workspace for flow review, AI coverage analysis, steel-domain test generation, and inspection-ready QA evidence.</p>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(0,1fr))",gap:10,textAlign:"left"}}>
-                {["Flow Explorer","AI Review","Coverage Inspector"].map((x,i)=><div key={x} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:11,fontWeight:800,color:T.text}}>{x}</div><div style={{fontSize:10,color:T.textFaint,marginTop:5}}>Step {i+1}</div></div>)}
+              <div style={{width:56,height:56,borderRadius:T.r,background:T.accentLight,color:T.accent,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:14}}>
+                {previewMode==="quality"?<Ic.Beaker size={28}/>:previewMode==="coverage"?<Ic.Factory size={28}/>:previewMode==="ai"?<Ic.Bot size={28}/>:<Ic.Factory size={28}/>}
               </div>
+              <h2 style={{fontSize:24,margin:"0 0 8px",fontWeight:800}}>{previewMode==="quality"?"Quality Queue":previewMode==="coverage"?"Coverage Inspector":previewMode==="ai"?"AI Workbench":"QAHub Studio"}</h2>
+              <p style={{fontSize:13,color:T.textMuted,lineHeight:1.7,margin:"0 0 16px"}}>
+                {previewMode==="quality"?"Review story readiness, acceptance criteria clarity, and steel-manufacturing QA gaps before test generation.":previewMode==="coverage"?"Analyze regression scope, impacted systems, deterministic steel spec checks, and traceability evidence.":previewMode==="ai"?"Configure NVIDIA NIM, GitHub Copilot, OpenAI, or Anthropic models before running AI review workflows.":"A structured workspace for flow review, AI coverage analysis, steel-domain test generation, and inspection-ready QA evidence."}
+              </p>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(0,1fr))",gap:10,textAlign:"left"}}>
+                {(previewMode==="quality"?["Story Score","AC Gaps","Ready Gate"]:previewMode==="coverage"?["Regression","Traceability","Steel Specs"]:previewMode==="ai"?["Provider","Model Route","MCP Tools"]:["Flow Explorer","AI Review","Coverage Inspector"]).map((x,i)=><div key={x} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:11,fontWeight:800,color:T.text}}>{x}</div><div style={{fontSize:10,color:T.textFaint,marginTop:5}}>Step {i+1}</div></div>)}
+              </div>
+              {previewMode==="ai"&&<Btn variant={hasAI?"secondary":"navy"} onClick={()=>setShowSettings(true)} style={{marginTop:16}}><Ic.Settings size={14}/> {hasAI?"Manage AI Provider":"Configure AI Provider"}</Btn>}
             </div>
           </div>
         </div>
       </main>
 
-      <StudioInspector item={null} qaData={null} items={[]} hasAI={hasAIConfig()}/>
+      <div style={{gridColumn:4,gridRow:2,minHeight:0,minWidth:0,overflow:"hidden"}}>
+        <StudioInspector item={null} qaData={null} items={[]} hasAI={hasAI}/>
+      </div>
 
       <div style={{gridColumn:"2 / -1",gridRow:3,minWidth:0,display:"flex",alignItems:"center",gap:12,padding:"0 10px",borderTop:`1px solid ${T.border}`,background:T.bgMuted,color:T.textFaint,fontSize:11}}>
         <span>Not connected</span>
@@ -1759,6 +1770,8 @@ ${JSON.stringify(context,null,2)}`;
 
   // Merge item with qaData
   const mergedItem = {...item, editedContent:editContent, acceptanceCriteria:editAC, notes};
+  const adoItemUrl = item.url || (conn ? `https://dev.azure.com/${encodeURIComponent(conn.org)}/${encodeURIComponent(conn.projectName)}/_workitems/edit/${item.id}` : "");
+  if (!item.url && adoItemUrl) item.url = adoItemUrl;
 
   return(
     <div style={{height:"100%",display:"flex",flexDirection:"column"}}>
