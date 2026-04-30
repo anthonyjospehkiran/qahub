@@ -1708,14 +1708,38 @@ function downloadReport(name, content, type="text/plain") {
   a.click();
 }
 function ReportsPanel({items, qaStore, conn, onSelect}) {
-  const [view,setView]=useState("all");
+  const [view,setView]=useState("aging");
+  const [dashFilters,setDashFilters]=useState({state:"",type:"",priority:"",owner:"",release:"",search:"",maxDays:1000});
   const report = useMemo(()=>buildReport(items, qaStore),[items, qaStore]);
+  const uniq = arr => Array.from(new Set(arr.filter(Boolean))).sort((a,b)=>String(a).localeCompare(String(b), undefined, {sensitivity:"base",numeric:true}));
+  const testingItems = useMemo(()=>items.filter(i=>!closedState(i.state)&&(isQAState(i)||isUATState(i))),[items]);
+  const dashOptions = useMemo(()=>({
+    states: uniq(testingItems.map(i=>i.state)),
+    types: uniq(testingItems.map(i=>i.type)),
+    priorities: uniq(testingItems.map(i=>i.priority)),
+    owners: uniq(testingItems.map(i=>i.assignedTo||"Unassigned")),
+    releases: uniq(testingItems.map(i=>(i.iterationPath||"Unassigned").split("\\").pop())),
+  }),[testingItems]);
+  const dashRows = useMemo(()=>testingItems
+    .filter(i=>!dashFilters.state || i.state===dashFilters.state)
+    .filter(i=>!dashFilters.type || i.type===dashFilters.type)
+    .filter(i=>!dashFilters.priority || i.priority===dashFilters.priority)
+    .filter(i=>!dashFilters.owner || (i.assignedTo||"Unassigned")===dashFilters.owner)
+    .filter(i=>!dashFilters.release || (i.iterationPath||"Unassigned").split("\\").pop()===dashFilters.release)
+    .filter(i=>pendingDays(i)<=Number(dashFilters.maxDays||1000))
+    .filter(i=>!dashFilters.search || `${i.id} ${i.title}`.toLowerCase().includes(dashFilters.search.toLowerCase()))
+    .sort((a,b)=>pendingDays(b)-pendingDays(a)),[testingItems,dashFilters]);
+  const avgDashDays = dashRows.length ? Math.round(dashRows.reduce((s,i)=>s+pendingDays(i),0)/dashRows.length) : 0;
   const esc=v=>`"${String(v??"").replace(/"/g,'""')}"`;
   const md=v=>String(v??"").replace(/\|/g,"/").replace(/\r?\n/g," ").trim();
   const excerpt=(v,n=450)=>{const s=md(v); return s.length>n ? `${s.slice(0,n)}...` : s;};
   const exportCSV=()=>{
     const rows = report.pendingRows.map(r=>[r.stage,r.id,r.title,r.type,r.state,r.release,r.owner,r.days,r.reason].map(esc).join(","));
     downloadReport("qahub-pending-qa-uat-report.csv", ["Stage,ID,Title,Type,State,Release,Owner,Pending Days,Reason",...rows].join("\n"), "text/csv");
+  };
+  const exportAgingCSV=()=>{
+    const rows = dashRows.map(i=>[i.id,i.type,i.title,i.state,i.priority,pendingDays(i),i.assignedTo||"Unassigned",(i.iterationPath||"Unassigned").split("\\").pop(),pendingReason(i,qaStore[i.id]||{})].map(esc).join(","));
+    downloadReport("qahub-testing-aging-dashboard.csv", ["ID,Type,Title,State,Priority,Days,Owner,Release,Reason",...rows].join("\n"), "text/csv");
   };
   const exportJSON=()=>downloadReport("qahub-test-plan-report.json", JSON.stringify({project:conn?.projectName, generatedAt:now(), ...report}, null, 2), "application/json");
   const exportMD=()=>{
@@ -1748,6 +1772,16 @@ function ReportsPanel({items, qaStore, conn, onSelect}) {
     downloadReport("qahub-test-plan-report.md", lines.join("\n"), "text/markdown");
   };
   const Tile=({label,value,sub,color=T.text})=><div style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,padding:12}}><div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:T.textMuted,marginBottom:6}}>{label}</div><div style={{fontSize:26,fontWeight:800,color}}>{value}</div>{sub&&<div style={{fontSize:11,color:T.textFaint,marginTop:3}}>{sub}</div>}</div>;
+  const dark = T.name === "dark";
+  const dashBg = dark ? "#0d1117" : "#0d1117";
+  const dashCard = "#151a22";
+  const dashLine = "#2b3340";
+  const dashText = "#f8fafc";
+  const dashMuted = "#94a3b8";
+  const DashSelect=({label,value,onChange,options})=><label style={{display:"flex",flexDirection:"column",gap:5,minWidth:110}}><span style={{fontSize:10,color:dashMuted,fontWeight:800,textTransform:"uppercase"}}>{label}</span><select value={value} onChange={e=>onChange(e.target.value)} style={{height:30,border:`1px solid ${dashLine}`,borderRadius:5,background:"#1d232d",color:dashText,fontSize:12,padding:"0 8px"}}><option value="">All</option>{options.map(o=><option key={o} value={o}>{o}</option>)}</select></label>;
+  const priorityName=p=>p==="Critical"?"P1 — Critical":p==="High"?"P2 — High":p==="Medium"?"P3 — Medium":p==="Low"?"P4 — Low":"Unprioritized";
+  const priorityOrder={Critical:0,High:1,Medium:2,Low:3};
+  const groupedDash=Object.entries(dashRows.reduce((acc,item)=>{const k=item.priority||"Unprioritized";(acc[k]||=[]).push(item);return acc;},{})).sort(([a],[b])=>(priorityOrder[a]??9)-(priorityOrder[b]??9));
   return <div style={{height:"100%",display:"flex",flexDirection:"column",background:T.bgCard}}>
     <div style={{height:46,display:"flex",alignItems:"center",gap:8,padding:"0 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
       <Ic.BarChart size={16}/><b style={{fontSize:13}}>Reports</b><span style={{fontSize:11,color:T.textFaint}}>QA / UAT aging and complete test plan summary · scoped to {items.length} loaded item{items.length===1?"":"s"}</span>
@@ -1761,9 +1795,50 @@ function ReportsPanel({items, qaStore, conn, onSelect}) {
       <Tile label="Releases" value={report.releases.length} sub={conn?.projectName}/>
     </div>
     <div style={{display:"flex",gap:4,padding:"6px 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
-      {[["all",`All Stories (${report.stories.length})`],["pending",`Pending QA/UAT (${report.pendingRows.length})`],["release",`Release Rollup (${report.releases.length})`],["plan",`Test Plan Coverage (${report.stories.length})`],["complete","Complete Report"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
+      {[["aging",`Testing Aging (${dashRows.length})`],["all",`All Stories (${report.stories.length})`],["pending",`Pending QA/UAT (${report.pendingRows.length})`],["release",`Release Rollup (${report.releases.length})`],["plan",`Test Plan Coverage (${report.stories.length})`],["complete","Complete Report"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
     </div>
     <div style={{flex:1,overflow:"auto",padding:12}}>
+      {view==="aging"&&<div style={{background:dashBg,color:dashText,minHeight:"100%",padding:14,borderRadius:T.r,display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{border:`1px solid ${dashLine}`,borderRadius:7,background:dashCard,overflow:"hidden"}}>
+          <div style={{padding:"14px 16px",borderBottom:`1px solid ${dashLine}`,fontSize:14,fontWeight:800}}>QA Testing KPIs</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))"}}>
+            {[
+              ["In Testing",testingItems.length,"#f8fafc"],
+              ["Bugs",testingItems.filter(i=>/bug/i.test(i.type)).length,T.red],
+              ["Features",testingItems.filter(i=>!/bug/i.test(i.type)).length,T.blue],
+              ["Avg Age (days)",avgDashDays,T.amber],
+              ["Overdue (>14 days)",testingItems.filter(i=>pendingDays(i)>14).length,T.red],
+            ].map(([label,value,color])=><div key={label} style={{padding:"18px 20px",borderRight:`1px solid ${dashLine}`}}><div style={{fontSize:28,fontWeight:800,color}}>{value}</div><div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em",color:dashMuted,marginTop:6}}>{label}</div></div>)}
+          </div>
+        </div>
+        <div style={{maxWidth:1360,margin:"0 auto",width:"100%",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
+            <div><div style={{fontSize:20,fontWeight:900}}>ADO Testing Aging Report</div><div style={{fontSize:11,color:dashMuted}}>{conn?.projectName} · {conn?.org} · As of {new Date().toLocaleDateString()}</div></div>
+            <div style={{marginLeft:"auto",display:"flex",gap:8}}><span style={{padding:"5px 10px",borderRadius:7,background:"#0b2b63",color:"#60a5fa",fontSize:12,fontWeight:800}}>QA Testing: {testingItems.filter(isQAState).length}</span><span style={{padding:"5px 10px",borderRadius:7,background:"#2d1858",color:"#c084fc",fontSize:12,fontWeight:800}}>User Testing: {testingItems.filter(isUATState).length}</span><span style={{padding:"5px 10px",borderRadius:7,background:"#202733",color:"#cbd5e1",fontSize:12,fontWeight:800}}>Total: {testingItems.length}</span></div>
+          </div>
+          <div style={{border:`1px solid ${dashLine}`,borderRadius:7,background:dashCard,padding:"12px 14px",fontSize:13,fontWeight:800}}>Requirements ({dashRows.length})</div>
+          <div style={{border:`1px solid ${dashLine}`,borderRadius:7,background:dashCard,padding:12,display:"flex",gap:8,alignItems:"end",flexWrap:"wrap"}}>
+            <DashSelect label="State" value={dashFilters.state} options={dashOptions.states} onChange={v=>setDashFilters(f=>({...f,state:v}))}/>
+            <DashSelect label="Type" value={dashFilters.type} options={dashOptions.types} onChange={v=>setDashFilters(f=>({...f,type:v}))}/>
+            <DashSelect label="Priority" value={dashFilters.priority} options={dashOptions.priorities} onChange={v=>setDashFilters(f=>({...f,priority:v}))}/>
+            <DashSelect label="Owner" value={dashFilters.owner} options={dashOptions.owners} onChange={v=>setDashFilters(f=>({...f,owner:v}))}/>
+            <DashSelect label="Release" value={dashFilters.release} options={dashOptions.releases} onChange={v=>setDashFilters(f=>({...f,release:v}))}/>
+            <label style={{display:"flex",flexDirection:"column",gap:5,minWidth:170}}><span style={{fontSize:10,color:dashMuted,fontWeight:800,textTransform:"uppercase"}}>Search</span><input value={dashFilters.search} onChange={e=>setDashFilters(f=>({...f,search:e.target.value}))} placeholder="ID or title..." style={{height:30,border:`1px solid ${dashLine}`,borderRadius:5,background:"#1d232d",color:dashText,fontSize:12,padding:"0 8px"}}/></label>
+          </div>
+          <div style={{border:`1px solid ${dashLine}`,borderRadius:7,background:dashCard,padding:10,display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:12,color:dashMuted}}>Days:</span><b>0</b><input type="range" min="0" max="1000" value={dashFilters.maxDays} onChange={e=>setDashFilters(f=>({...f,maxDays:e.target.value}))} style={{width:220}}/><b>{dashFilters.maxDays}</b>
+            <Btn size="sm" variant="ghost" onClick={()=>setDashFilters({state:"",type:"",priority:"",owner:"",release:"",search:"",maxDays:1000})}><Ic.Close size={12}/> Reset</Btn>
+            <Btn size="sm" variant="ghost" onClick={exportAgingCSV}><Ic.Download size={12}/> Export CSV</Btn>
+          </div>
+          {groupedDash.map(([priority,rows])=><div key={priority}>
+            <div style={{fontSize:16,fontWeight:900,margin:"4px 0 6px"}}>{priorityName(priority)} <span style={{fontSize:11,color:dashMuted,background:"#263241",borderRadius:9,padding:"2px 8px",marginLeft:6}}>{rows.length}</span></div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,background:dashCard,border:`1px solid ${dashLine}`,borderRadius:7,overflow:"hidden"}}>
+              <thead><tr>{["ID","Type","Description","State","Priority","Days","Owner","Release","Reason"].map(h=><th key={h} style={{textAlign:"left",padding:"9px 10px",borderBottom:`1px solid ${dashLine}`,color:dashMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+              <tbody>{rows.map(item=><tr key={item.id} onClick={()=>onSelect?.(item.id)} style={{cursor:"pointer"}}><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`,color:"#60a5fa",fontWeight:800}}>#{item.id}</td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`}}><span style={{padding:"2px 7px",borderRadius:5,background:/bug/i.test(item.type)?T.red:T.violet,color:"#fff",fontSize:10,fontWeight:800}}>{item.type}</span></td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`,fontWeight:700}}>{item.title}</td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`}}><span style={{padding:"2px 8px",borderRadius:9,background:isQAState(item)?"#0b2b63":"#2d1858",color:isQAState(item)?"#60a5fa":"#c084fc",fontSize:11,fontWeight:800}}>{item.state}</span></td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`,color:T.red,fontWeight:900}}>{priority==="Critical"?"P1":priority}</td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`}}><span style={{padding:"2px 8px",borderRadius:9,background:pendingDays(item)>14?"#4c1d1d":"#374151",color:pendingDays(item)>14?T.red:dashText,fontWeight:800}}>{pendingDays(item)}d</span></td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`}}>{item.assignedTo||"Unassigned"}</td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`,color:"#60a5fa"}}>{(item.iterationPath||"Unassigned").split("\\").pop()}</td><td style={{padding:"9px 10px",borderBottom:`1px solid ${dashLine}`,color:dashMuted}}>{pendingReason(item,qaStore[item.id]||{})}</td></tr>)}</tbody>
+            </table>
+          </div>)}
+        </div>
+      </div>}
       {view==="all"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["ID","Title","Type","State","Days","Release","Owner","QA/UAT"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.stories.map(item=><tr key={item.id} onClick={()=>onSelect?.(item.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{item.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{item.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{item.type}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{item.state}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:pendingDays(item)>=5?T.red:T.text}}>{pendingDays(item)}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{(item.iterationPath||"Unassigned").split("\\").pop()}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{item.assignedTo||"Unassigned"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:isQAState(item)?T.amber:isUATState(item)?T.violet:T.textMuted}}>{isQAState(item)?"QA":isUATState(item)?"UAT":"-"}</td></tr>)}</tbody></table>}
       {view==="pending"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["Stage","ID","Title","State","Days","Release","Owner","Reason"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.pendingRows.map(r=><tr key={`${r.stage}-${r.id}`} onClick={()=>onSelect?.(r.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.stage}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{r.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{r.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.state}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:r.days>=5?T.red:T.text}}>{r.days}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.release.split("\\").pop()}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.owner}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted}}>{r.reason}</td></tr>)}</tbody></table>}
       {view==="release"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:10}}>{report.releases.map(r=><div key={r.release} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:13,fontWeight:800,marginBottom:8}}>{r.release.split("\\").pop()}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,color:T.textMuted}}><span>Total</span><b>{r.total}</b><span>Open</span><b>{r.open}</b><span>QA Pending</span><b style={{color:r.qaPending?T.amber:T.green}}>{r.qaPending}</b><span>UAT Pending</span><b style={{color:r.uatPending?T.violet:T.green}}>{r.uatPending}</b><span>Avg Pending Days</span><b>{r.avgPendingDays}</b><span>Blockers</span><b style={{color:r.blockers?T.red:T.green}}>{r.blockers}</b></div></div>)}</div>}
