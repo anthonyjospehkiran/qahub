@@ -139,9 +139,13 @@ async function saveDB(d) { try { localStorage.setItem(SK, JSON.stringify(stripSe
 function getApiKey() {
   const provider = getAIProvider();
   if(provider==="copilot") return "";
-  if(provider==="openai"){
+  if(provider==="openai" || provider==="nvidia"){
     return (typeof import.meta !== "undefined" ? import.meta.env?.VITE_OPENAI_KEY : "") ||
            localStorage.getItem("qa-hub-openai-key") || "";
+  }
+  if(provider==="nvidia"){
+    return (typeof import.meta !== "undefined" ? import.meta.env?.VITE_NVIDIA_API_KEY : "") ||
+           localStorage.getItem("qa-hub-nvidia-key") || "";
   }
   return (typeof import.meta !== "undefined" ? import.meta.env?.VITE_ANTHROPIC_KEY : "") ||
          localStorage.getItem("qa-hub-anthropic-key") ||
@@ -172,6 +176,14 @@ const MODEL_ROUTE = {
     tests: "claude-opus-4-7",
     coverage: "claude-opus-4-7",
   },
+  nvidia: {
+    chat: "minimaxai/minimax-m2.7",
+    review: "mistralai/mistral-medium-3.5-128b",
+    tests: "mistralai/mistral-medium-3.5-128b",
+    coverage: "mistralai/mistral-medium-3.5-128b",
+    code: "qwen/qwen3-coder-480b-a35b-instruct",
+    vision: "meta/llama-4-maverick-17b-128e-instruct",
+  },
 };
 function getTaskModel(provider, task="chat") {
   if (provider === "copilot") return task === "chat" ? getCopilotModel() : getAnalysisModel();
@@ -197,6 +209,9 @@ function makeAnthropicSystem(system) {
 }
 function openAITokenBudget(model, maxTokens) {
   return /^gpt-5|^o\d|^o-/i.test(model) ? { max_completion_tokens:maxTokens } : { max_tokens:maxTokens };
+}
+function openAICompatibleJsonFormat(provider) {
+  return provider === "nvidia" ? { type:"json_object" } : makeOpenAIJsonFormat();
 }
 function hasAIConfig() {
   return getAIProvider()==="copilot" || !!getApiKey();
@@ -496,13 +511,14 @@ async function callClaude(system, messages, maxTokens=4096, jsonMode=false, onCh
     }
     return full;
   }
-  if (!apiKey) throw new Error(`No ${provider==="openai"?"OpenAI":"Anthropic"} API key — click Settings to add one.`);
+  if (!apiKey) throw new Error(`No ${provider==="openai"?"OpenAI":provider==="nvidia"?"NVIDIA":"Anthropic"} API key — click Settings to add one.`);
   if(provider==="openai"){
     const stream=!!onChunk;
-    const model = modelOverride || getTaskModel("openai", task);
+    const model = modelOverride || getTaskModel(provider, task);
     const oaiBody={model,...openAITokenBudget(model,maxTokens),stream,messages:[{role:"system",content:system},...messages]};
-    if(jsonMode) oaiBody.response_format=makeOpenAIJsonFormat();
-    const r = await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},signal,body:JSON.stringify(oaiBody)});
+    if(jsonMode) oaiBody.response_format=openAICompatibleJsonFormat(provider);
+    const endpoint = provider==="nvidia" ? "https://integrate.api.nvidia.com/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
+    const r = await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},signal,body:JSON.stringify(oaiBody)});
     if(!r.ok){ const d=await r.json().catch(()=>({})); throw new Error(d.error?.message||r.statusText); }
     if(!stream){ const d=await r.json(); return d.choices?.[0]?.message?.content||""; }
     const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="", full="";
@@ -976,14 +992,14 @@ function SettingsPanel({ onClose, onSaved }) {
   const save = () => {
     localStorage.setItem("qa-hub-ai-provider", provider);
     if(provider==="copilot") { /* nothing to save — token lives on server */ }
-    else localStorage.setItem(provider==="openai"?"qa-hub-openai-key":"qa-hub-anthropic-key", key.trim());
+    else localStorage.setItem(provider==="openai"?"qa-hub-openai-key":provider==="nvidia"?"qa-hub-nvidia-key":"qa-hub-anthropic-key", key.trim());
     onSaved?.(provider==="copilot" || !!key.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
   const changeProvider = (next) => {
     setProvider(next);
-    setKey(next==="openai" ? (localStorage.getItem("qa-hub-openai-key")||"") : next==="anthropic" ? (localStorage.getItem("qa-hub-anthropic-key")||localStorage.getItem("qa-hub-apikey")||"") : "");
+    setKey(next==="openai" ? (localStorage.getItem("qa-hub-openai-key")||"") : next==="nvidia" ? (localStorage.getItem("qa-hub-nvidia-key")||"") : next==="anthropic" ? (localStorage.getItem("qa-hub-anthropic-key")||localStorage.getItem("qa-hub-apikey")||"") : "");
   };
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:999}} onClick={onClose}>
@@ -998,17 +1014,19 @@ function SettingsPanel({ onClose, onSaved }) {
             <button type="button" onClick={()=>changeProvider("copilot")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="copilot"?T.blue:T.border}`,borderRadius:T.r,background:provider==="copilot"?T.blueBg:T.bgCard,color:provider==="copilot"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>GitHub Copilot</button>
             <button type="button" onClick={()=>changeProvider("openai")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="openai"?T.blue:T.border}`,borderRadius:T.r,background:provider==="openai"?T.blueBg:T.bgCard,color:provider==="openai"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>OpenAI</button>
             <button type="button" onClick={()=>changeProvider("anthropic")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="anthropic"?T.blue:T.border}`,borderRadius:T.r,background:provider==="anthropic"?T.blueBg:T.bgCard,color:provider==="anthropic"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>Anthropic</button>
+            <button type="button" onClick={()=>changeProvider("nvidia")} style={{flex:"1 1 45%",padding:"8px 10px",border:`1.5px solid ${provider==="nvidia"?T.blue:T.border}`,borderRadius:T.r,background:provider==="nvidia"?T.blueBg:T.bgCard,color:provider==="nvidia"?T.blue:T.text,fontSize:12,fontWeight:700,cursor:"pointer"}}>NVIDIA NIM</button>
           </div>
           {provider==="copilot"? <CopilotAuthSection/> : <>
-            <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>{provider==="openai"?"OpenAI":"Anthropic"} API Key <span style={{color:T.accent}}>*</span></label>
+            <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>{provider==="openai"?"OpenAI":provider==="nvidia"?"NVIDIA":"Anthropic"} API Key <span style={{color:T.accent}}>*</span></label>
             <input type="password" value={key} onChange={e=>setKey(e.target.value)}
-              placeholder={provider==="openai"?"sk-...":"sk-ant-..."}
+              placeholder={provider==="openai"?"sk-...":provider==="nvidia"?"nvapi-...":"sk-ant-..."}
               style={{padding:"8px 11px",border:`1.5px solid ${T.border}`,borderRadius:T.r,fontFamily:"monospace",fontSize:12,color:T.text,background:T.bgCard,outline:"none"}}
               onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
             <ProviderModelHint provider={provider}/>
           </>}
           <span style={{fontSize:10,color:T.textFaint}}>
-            {provider==="openai"?<>Get yours at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style={{color:T.blue}}>platform.openai.com/api-keys ↗</a>.</>:provider==="anthropic"?<>Get yours at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{color:T.blue}}>console.anthropic.com/settings/keys ↗</a>.</>:<>Sign in with your GitHub account that has Copilot access — token stays on the server.</>}
+            {provider==="nvidia"&&<>Get yours from <a href="https://build.nvidia.com" target="_blank" rel="noopener" style={{color:T.blue}}>build.nvidia.com â†—</a>. QAHub calls NVIDIA NIM at <code>integrate.api.nvidia.com</code>. </>}
+            {provider!=="nvidia"&&(provider==="openai"?<>Get yours at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style={{color:T.blue}}>platform.openai.com/api-keys ↗</a>.</>:provider==="anthropic"?<>Get yours at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{color:T.blue}}>console.anthropic.com/settings/keys ↗</a>.</>:<>Sign in with your GitHub account that has Copilot access — token stays on the server.</>)}
             {provider!=="copilot"&&" Stored only in this browser (localStorage), never sent anywhere except the selected AI provider."}
           </span>
         </div>
@@ -1977,6 +1995,7 @@ function GlobalCopilotPanel({open, onClose, contextItem, conn, onOpenSettings, h
           <option value="copilot">GitHub Copilot</option>
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
+          <option value="nvidia">NVIDIA NIM</option>
         </select>
         {provider==="copilot" && (
           copilotModels.length>0 ? (
