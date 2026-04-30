@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── Theme system: light + dark, swappable at runtime ───────────────────────
 // Structural tokens are theme-independent (radius, type/space scale, fonts).
@@ -388,6 +388,8 @@ function wiToItem(wi) {
     assignedTo:    f["System.AssignedTo"]?.displayName||"",
     areaPath:      f["System.AreaPath"]||"",
     iterationPath: f["System.IterationPath"]||"",
+    createdDate:   f["System.CreatedDate"]||"",
+    stateChangeDate: f["Microsoft.VSTS.Common.StateChangeDate"]||f["System.ChangedDate"]||"",
     tags:          f["System.Tags"]||"",
     description:   stripHtml(f["System.Description"]||""),
     acceptanceCriteria: stripHtml(f["Microsoft.VSTS.Common.AcceptanceCriteria"]||""),
@@ -834,6 +836,9 @@ const Ic = {
   Bot: ({size=14}) => _ic(size, <><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 2v6"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></>),
   Message: ({size=14}) => _ic(size, <><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></>),
   FileText: ({size=14}) => _ic(size, <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></>),
+  BarChart: ({size=14}) => _ic(size, <><line x1="3" y1="20" x2="21" y2="20"/><rect x="6" y="10" width="3" height="7"/><rect x="11" y="6" width="3" height="11"/><rect x="16" y="13" width="3" height="4"/></>),
+  Download: ({size=14}) => _ic(size, <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>),
+  Clock: ({size=14}) => _ic(size, <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>),
   Microscope: ({size=14}) => _ic(size, <><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></>),
   Sparkles: ({size=14}) => _ic(size, <><path d="M12 3l1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2z"/><path d="M19 17l.7 2.3L22 20l-2.3.7L19 23l-.7-2.3L16 20l2.3-.7z"/></>),
   Sun: ({size=14}) => _ic(size, <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></>),
@@ -1144,21 +1149,21 @@ function ConnectScreen({onConnect}) {
       <main style={{gridColumn:3,gridRow:2,minHeight:0,overflow:"hidden",padding:10,background:`linear-gradient(${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), linear-gradient(90deg, ${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), ${T.bg}`,backgroundSize:"24px 24px"}}>
         <div style={{height:"100%",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,boxShadow:T.sh,display:"flex",flexDirection:"column",overflow:"hidden"}}>
           <div style={{height:42,padding:"0 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8,background:T.bgMuted}}>
-            {previewMode==="quality"?<Ic.Beaker size={15}/>:previewMode==="coverage"?<Ic.Factory size={15}/>:previewMode==="ai"?<Ic.Bot size={15}/>:<Ic.Layers size={15}/>}
-            <div style={{fontSize:12,fontWeight:800}}>{previewMode==="quality"?"Quality Queue":previewMode==="coverage"?"Coverage Inspector":previewMode==="ai"?"AI Provider Setup":"Studio Preview"}</div>
+            {previewMode==="quality"?<Ic.Beaker size={15}/>:previewMode==="coverage"?<Ic.Factory size={15}/>:previewMode==="reports"?<Ic.BarChart size={15}/>:previewMode==="ai"?<Ic.Bot size={15}/>:<Ic.Layers size={15}/>}
+            <div style={{fontSize:12,fontWeight:800}}>{previewMode==="quality"?"Quality Queue":previewMode==="coverage"?"Coverage Inspector":previewMode==="reports"?"Reports":previewMode==="ai"?"AI Provider Setup":"Studio Preview"}</div>
             <span style={{fontSize:11,color:T.textFaint}}>Connect to load real Azure DevOps flows</span>
           </div>
           <div style={{flex:1,display:"grid",placeItems:"center",padding:28,textAlign:"center"}}>
             <div style={{maxWidth:560}}>
               <div style={{width:56,height:56,borderRadius:T.r,background:T.accentLight,color:T.accent,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:14}}>
-                {previewMode==="quality"?<Ic.Beaker size={28}/>:previewMode==="coverage"?<Ic.Factory size={28}/>:previewMode==="ai"?<Ic.Bot size={28}/>:<Ic.Factory size={28}/>}
+                {previewMode==="quality"?<Ic.Beaker size={28}/>:previewMode==="coverage"?<Ic.Factory size={28}/>:previewMode==="reports"?<Ic.BarChart size={28}/>:previewMode==="ai"?<Ic.Bot size={28}/>:<Ic.Factory size={28}/>}
               </div>
-              <h2 style={{fontSize:24,margin:"0 0 8px",fontWeight:800}}>{previewMode==="quality"?"Quality Queue":previewMode==="coverage"?"Coverage Inspector":previewMode==="ai"?"AI Workbench":"QAHub Studio"}</h2>
+              <h2 style={{fontSize:24,margin:"0 0 8px",fontWeight:800}}>{previewMode==="quality"?"Quality Queue":previewMode==="coverage"?"Coverage Inspector":previewMode==="reports"?"QA Reports":previewMode==="ai"?"AI Workbench":"QAHub Studio"}</h2>
               <p style={{fontSize:13,color:T.textMuted,lineHeight:1.7,margin:"0 0 16px"}}>
-                {previewMode==="quality"?"Review story readiness, acceptance criteria clarity, and steel-manufacturing QA gaps before test generation.":previewMode==="coverage"?"Analyze regression scope, impacted systems, deterministic steel spec checks, and traceability evidence.":previewMode==="ai"?"Configure NVIDIA NIM, GitHub Copilot, OpenAI, or Anthropic models before running AI review workflows.":"A structured workspace for flow review, AI coverage analysis, steel-domain test generation, and inspection-ready QA evidence."}
+                {previewMode==="quality"?"Review story readiness, acceptance criteria clarity, and steel-manufacturing QA gaps before test generation.":previewMode==="coverage"?"Analyze regression scope, impacted systems, deterministic steel spec checks, and traceability evidence.":previewMode==="reports"?"Track release readiness, stories pending QA/UAT, aging days, pending reasons, and full test-plan coverage.":previewMode==="ai"?"Configure NVIDIA NIM, GitHub Copilot, OpenAI, or Anthropic models before running AI review workflows.":"A structured workspace for flow review, AI coverage analysis, steel-domain test generation, and inspection-ready QA evidence."}
               </p>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(0,1fr))",gap:10,textAlign:"left"}}>
-                {(previewMode==="quality"?["Story Score","AC Gaps","Ready Gate"]:previewMode==="coverage"?["Regression","Traceability","Steel Specs"]:previewMode==="ai"?["Provider","Model Route","MCP Tools"]:["Flow Explorer","AI Review","Coverage Inspector"]).map((x,i)=><div key={x} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:11,fontWeight:800,color:T.text}}>{x}</div><div style={{fontSize:10,color:T.textFaint,marginTop:5}}>Step {i+1}</div></div>)}
+                {(previewMode==="quality"?["Story Score","AC Gaps","Ready Gate"]:previewMode==="coverage"?["Regression","Traceability","Steel Specs"]:previewMode==="reports"?["QA Aging","UAT Aging","Test Plan"]:previewMode==="ai"?["Provider","Model Route","MCP Tools"]:["Flow Explorer","AI Review","Coverage Inspector"]).map((x,i)=><div key={x} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:11,fontWeight:800,color:T.text}}>{x}</div><div style={{fontSize:10,color:T.textFaint,marginTop:5}}>Step {i+1}</div></div>)}
               </div>
               {previewMode==="ai"&&<Btn variant={hasAI?"secondary":"navy"} onClick={()=>setShowSettings(true)} style={{marginTop:16}}><Ic.Settings size={14}/> {hasAI?"Manage AI Provider":"Configure AI Provider"}</Btn>}
             </div>
@@ -1640,6 +1645,94 @@ function CoverageAgentPanel({coverage, loading}) {
 }
 
 // ─── Work Item Detail (Right Panel) ──────────────────────────────────────────
+const MS_DAY = 86400000;
+const STORY_TYPES = new Set(["User Story","Product Backlog Item","Feature"]);
+const QA_STATES = new Set(["Ready","Ready for Testing","Resolved","QA","QA Testing","In QA","Ready for QA"]);
+const UAT_STATES = new Set(["UAT","UAT Testing","In UAT","Ready for UAT","User Acceptance Testing"]);
+const closedState = s => /done|closed|removed|completed/i.test(String(s||""));
+const daysSince = d => d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / MS_DAY)) : 0;
+const isStoryLike = item => STORY_TYPES.has(item.type) || /story|backlog|feature/i.test(item.type||"");
+const isQAState = item => QA_STATES.has(item.state) || /\bqa\b|test/i.test(item.state||"");
+const isUATState = item => UAT_STATES.has(item.state) || /\buat\b|user acceptance/i.test(`${item.state} ${item.tags} ${item.iterationPath}`);
+const pendingDays = item => daysSince(item.stateChangeDate || item.changedDate || item.createdDate);
+function pendingReason(item, qa={}) {
+  const reasons = [];
+  const text = `${item.title} ${item.tags} ${item.description} ${item.acceptanceCriteria}`.toLowerCase();
+  if (/block|hold|waiting|dependency|clarification|defect|environment|access/.test(text)) reasons.push("Blocked / waiting dependency");
+  if (!item.assignedTo) reasons.push("Unassigned owner");
+  if (!item.hasAC) reasons.push("Missing acceptance criteria");
+  if (!item.testPlan && !qa.testCases) reasons.push("No test plan or generated cases");
+  if (qa.review?.blockers?.length) reasons.push(`${qa.review.blockers.length} AI review blocker(s)`);
+  if (qa.coverage?.finalQARecommendation?.status === "Blocked") reasons.push("Coverage recommendation blocked");
+  if (pendingDays(item) >= 5) reasons.push(`Aging ${pendingDays(item)} days in current state`);
+  return reasons.length ? reasons.join("; ") : "Pending normal QA/UAT execution";
+}
+function buildReport(items=[], qaStore={}) {
+  const stories = items.filter(isStoryLike);
+  const openStories = stories.filter(i=>!closedState(i.state));
+  const qaPending = stories.filter(i=>!closedState(i.state) && isQAState(i));
+  const uatPending = stories.filter(i=>!closedState(i.state) && isUATState(i));
+  const missingPlan = stories.filter(i=>!closedState(i.state) && !i.testPlan && !qaStore[i.id]?.testCases);
+  const avg = arr => arr.length ? Math.round(arr.reduce((s,i)=>s+pendingDays(i),0)/arr.length) : 0;
+  const releases = Object.values(stories.reduce((acc,item)=>{
+    const rel = item.iterationPath || "Unassigned release";
+    acc[rel] ||= { release:rel, total:0, open:0, qaPending:0, uatPending:0, aging:0, blockers:0 };
+    acc[rel].total++;
+    if (!closedState(item.state)) acc[rel].open++;
+    if (isQAState(item)) acc[rel].qaPending++;
+    if (isUATState(item)) acc[rel].uatPending++;
+    acc[rel].aging += pendingDays(item);
+    if (pendingReason(item, qaStore[item.id]||{}).includes("Blocked")) acc[rel].blockers++;
+    return acc;
+  },{})).map(r=>({...r, avgPendingDays:r.total?Math.round(r.aging/r.total):0}));
+  const pendingRows = [...qaPending.map(i=>({stage:"QA Testing", item:i})), ...uatPending.map(i=>({stage:"UAT Testing", item:i}))]
+    .sort((a,b)=>pendingDays(b.item)-pendingDays(a.item))
+    .map(({stage,item})=>({ stage, id:item.id, title:item.title, type:item.type, state:item.state, release:item.iterationPath||"Unassigned", owner:item.assignedTo||"Unassigned", days:pendingDays(item), reason:pendingReason(item, qaStore[item.id]||{}) }));
+  return { stories, openStories, qaPending, uatPending, missingPlan, releases, pendingRows, avgQaDays:avg(qaPending), avgUatDays:avg(uatPending) };
+}
+function downloadReport(name, content, type="text/plain") {
+  const a=document.createElement("a");
+  a.href=`data:${type};charset=utf-8,${encodeURIComponent(content)}`;
+  a.download=name;
+  a.click();
+}
+function ReportsPanel({items, qaStore, conn, onSelect}) {
+  const [view,setView]=useState("pending");
+  const report = useMemo(()=>buildReport(items, qaStore),[items, qaStore]);
+  const esc=v=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const exportCSV=()=>{
+    const rows = report.pendingRows.map(r=>[r.stage,r.id,r.title,r.type,r.state,r.release,r.owner,r.days,r.reason].map(esc).join(","));
+    downloadReport("qahub-pending-qa-uat-report.csv", ["Stage,ID,Title,Type,State,Release,Owner,Pending Days,Reason",...rows].join("\n"), "text/csv");
+  };
+  const exportJSON=()=>downloadReport("qahub-test-plan-report.json", JSON.stringify({project:conn?.projectName, generatedAt:now(), ...report}, null, 2), "application/json");
+  const exportMD=()=>{
+    const lines = [`# QAHub Test Plan Report`, ``, `Project: ${conn?.projectName||""}`, `Generated: ${new Date().toLocaleString()}`, ``, `## Summary`, `- User stories/features: ${report.stories.length}`, `- Open stories: ${report.openStories.length}`, `- Pending QA testing: ${report.qaPending.length} (avg ${report.avgQaDays} days)`, `- Pending UAT testing: ${report.uatPending.length} (avg ${report.avgUatDays} days)`, `- Missing test plan/cases: ${report.missingPlan.length}`, ``, `## Pending QA/UAT`, `| Stage | ID | State | Days | Release | Owner | Reason |`, `|---|---:|---|---:|---|---|---|`, ...report.pendingRows.map(r=>`| ${r.stage} | ${r.id} | ${r.state} | ${r.days} | ${r.release} | ${r.owner} | ${r.reason} |`), ``, `## Release Rollup`, `| Release | Total | Open | QA Pending | UAT Pending | Avg Days | Blockers |`, `|---|---:|---:|---:|---:|---:|---:|`, ...report.releases.map(r=>`| ${r.release} | ${r.total} | ${r.open} | ${r.qaPending} | ${r.uatPending} | ${r.avgPendingDays} | ${r.blockers} |`)];
+    downloadReport("qahub-test-plan-report.md", lines.join("\n"), "text/markdown");
+  };
+  const Tile=({label,value,sub,color=T.text})=><div style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,padding:12}}><div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:T.textMuted,marginBottom:6}}>{label}</div><div style={{fontSize:26,fontWeight:800,color}}>{value}</div>{sub&&<div style={{fontSize:11,color:T.textFaint,marginTop:3}}>{sub}</div>}</div>;
+  return <div style={{height:"100%",display:"flex",flexDirection:"column",background:T.bgCard}}>
+    <div style={{height:46,display:"flex",alignItems:"center",gap:8,padding:"0 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
+      <Ic.BarChart size={16}/><b style={{fontSize:13}}>Reports</b><span style={{fontSize:11,color:T.textFaint}}>QA / UAT aging and complete test plan summary</span>
+      <div style={{marginLeft:"auto",display:"flex",gap:6}}><Btn size="sm" variant="ghost" onClick={exportCSV}><Ic.Download size={12}/> CSV</Btn><Btn size="sm" variant="ghost" onClick={exportMD}><Ic.FileText size={12}/> Plan</Btn><Btn size="sm" variant="ghost" onClick={exportJSON}>JSON</Btn></div>
+    </div>
+    <div style={{padding:12,borderBottom:`1px solid ${T.border}`,display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:10}}>
+      <Tile label="Stories / Features" value={report.stories.length} sub={`${report.openStories.length} open`}/>
+      <Tile label="Pending QA" value={report.qaPending.length} sub={`avg ${report.avgQaDays} days`} color={report.qaPending.length?T.amber:T.green}/>
+      <Tile label="Pending UAT" value={report.uatPending.length} sub={`avg ${report.avgUatDays} days`} color={report.uatPending.length?T.violet:T.green}/>
+      <Tile label="Missing Test Plan" value={report.missingPlan.length} sub="no plan/cases found" color={report.missingPlan.length?T.red:T.green}/>
+      <Tile label="Releases" value={report.releases.length} sub={conn?.projectName}/>
+    </div>
+    <div style={{display:"flex",gap:4,padding:"6px 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
+      {[["pending","Pending QA/UAT"],["release","Release Rollup"],["plan","Test Plan Coverage"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
+    </div>
+    <div style={{flex:1,overflow:"auto",padding:12}}>
+      {view==="pending"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["Stage","ID","Title","State","Days","Release","Owner","Reason"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.pendingRows.map(r=><tr key={`${r.stage}-${r.id}`} onClick={()=>onSelect?.(r.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.stage}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{r.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{r.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.state}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:r.days>=5?T.red:T.text}}>{r.days}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.release.split("\\").pop()}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.owner}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted}}>{r.reason}</td></tr>)}</tbody></table>}
+      {view==="release"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:10}}>{report.releases.map(r=><div key={r.release} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:13,fontWeight:800,marginBottom:8}}>{r.release.split("\\").pop()}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,color:T.textMuted}}><span>Total</span><b>{r.total}</b><span>Open</span><b>{r.open}</b><span>QA Pending</span><b style={{color:r.qaPending?T.amber:T.green}}>{r.qaPending}</b><span>UAT Pending</span><b style={{color:r.uatPending?T.violet:T.green}}>{r.uatPending}</b><span>Avg Pending Days</span><b>{r.avgPendingDays}</b><span>Blockers</span><b style={{color:r.blockers?T.red:T.green}}>{r.blockers}</b></div></div>)}</div>}
+      {view==="plan"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["ID","Story","AC","Plan/Cases","Review","Coverage","Release"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.stories.map(item=>{const qa=qaStore[item.id]||{};return <tr key={item.id} onClick={()=>onSelect?.(item.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{item.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{item.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:item.hasAC?T.green:T.red}}>{item.hasAC?"Yes":"Missing"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:(item.testPlan||qa.testCases)?T.green:T.red}}>{qa.testCases?.testCases?.length ? `${qa.testCases.testCases.length} cases` : item.testPlan ? "ADO plan" : "Missing"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{qa.review?`${qa.review.score}/10`:"Pending"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{qa.coverage?.requirementQualityScore?.overallScore||"Pending"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{(item.iterationPath||"Unassigned").split("\\").pop()}</td></tr>})}</tbody></table>}
+    </div>
+  </div>;
+}
+
 function WorkItemDetail({item, qaData, onUpdateQA, conn, allItems, hasAI, onOpenSettings}) {
   const [tab, setTab] = useState("chat");
   const [editContent, setEditContent] = useState(item?.editedContent||item?.description||"");
@@ -1846,7 +1939,7 @@ ${JSON.stringify(context,null,2)}`;
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function StudioRail({active="flows", onChange, onOpenCopilot, onOpenSettings}) {
-  const items = [["flows","Flows",Ic.Folder],["quality","Quality",Ic.Beaker],["coverage","Coverage",Ic.Factory],["ai","AI",Ic.Bot]];
+  const items = [["flows","Flows",Ic.Folder],["quality","Quality",Ic.Beaker],["coverage","Coverage",Ic.Factory],["reports","Reports",Ic.BarChart],["ai","AI",Ic.Bot]];
   return <nav style={{background:T.bgCard,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"8px 5px"}}>
     <div style={{width:34,height:34,borderRadius:T.r,background:T.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}><Ic.Beaker size={18}/></div>
     {items.map(([id,label,Icon])=>{const on=active===id;return <button key={id} title={label} aria-label={label} onClick={()=>id==="ai"?onOpenCopilot?.():onChange?.(id)}
@@ -2326,7 +2419,7 @@ export default function App() {
         <div style={{height:34,flexShrink:0,padding:"0 10px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
           <div style={{display:"flex",alignItems:"center",gap:7,fontSize:12,fontWeight:800,color:T.text}}>
             <Ic.Layers size={14}/>
-            <span>{studioMode==="quality"?"Quality Queue":studioMode==="coverage"?"Coverage Scope":studioMode==="ai"?"AI Workbench":"Flow Explorer"}</span>
+            <span>{studioMode==="quality"?"Quality Queue":studioMode==="coverage"?"Coverage Scope":studioMode==="reports"?"Reports":studioMode==="ai"?"AI Workbench":"Flow Explorer"}</span>
           </div>
           <span style={{fontSize:10,color:T.textFaint,fontFamily:T.mono}}>{items.length}</span>
         </div>
@@ -2340,14 +2433,16 @@ export default function App() {
 
       <main style={{gridColumn:3,gridRow:2,minHeight:0,minWidth:0,overflow:"hidden",padding:10,background:`linear-gradient(${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), linear-gradient(90deg, ${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), ${T.bg}`,backgroundSize:"24px 24px"}}>
         <div style={{height:"100%",minWidth:0,overflow:"hidden",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,boxShadow:T.sh,display:"flex",flexDirection:"column"}}>
-          <WorkItemDetail
-            item={selectedItem}
-            qaData={selId?{...selectedItem,...selectedQA}:null}
-            onUpdateQA={updateQA}
-            conn={conn}
-            allItems={items}
-            hasAI={hasAI}
-            onOpenSettings={()=>setShowSettings(true)}/>
+          {studioMode==="reports"
+            ? <ReportsPanel items={items} qaStore={qaStore} conn={conn} onSelect={id=>{setSelId(id);setStudioMode("flows");}}/>
+            : <WorkItemDetail
+                item={selectedItem}
+                qaData={selId?{...selectedItem,...selectedQA}:null}
+                onUpdateQA={updateQA}
+                conn={conn}
+                allItems={items}
+                hasAI={hasAI}
+                onOpenSettings={()=>setShowSettings(true)}/>}
         </div>
       </main>
 
