@@ -847,6 +847,11 @@ const Ic = {
   Sun: ({size=14}) => _ic(size, <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></>),
   Moon: ({size=14}) => _ic(size, <><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></>),
   Plug: ({size=14}) => _ic(size, <><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/></>),
+  Play: ({size=14}) => _ic(size, <><polygon points="6 3 20 12 6 21 6 3"/></>),
+  Save: ({size=14}) => _ic(size, <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>),
+  Folder: ({size=14}) => _ic(size, <><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></>),
+  Layers: ({size=14}) => _ic(size, <><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></>),
+  PanelRight: ({size=14}) => _ic(size, <><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></>),
   ArrowRight: ({size=14}) => _ic(size, <><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>),
   ArrowDown: ({size=14}) => _ic(size, <><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></>),
   Stop: ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none" style={{flexShrink:0,display:"inline-block"}}><rect x="6" y="6" width="12" height="12" rx="1"/></svg>,
@@ -1801,6 +1806,63 @@ ${JSON.stringify(context,null,2)}`;
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+function StudioRail({active="flows", onChange, onOpenCopilot, onOpenSettings}) {
+  const items = [["flows","Flows",Ic.Folder],["quality","Quality",Ic.Beaker],["coverage","Coverage",Ic.Factory],["ai","AI",Ic.Bot]];
+  return <nav style={{background:T.bgCard,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"8px 5px"}}>
+    <div style={{width:34,height:34,borderRadius:T.r,background:T.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}><Ic.Beaker size={18}/></div>
+    {items.map(([id,label,Icon])=>{const on=active===id;return <button key={id} title={label} aria-label={label} onClick={()=>id==="ai"?onOpenCopilot?.():onChange?.(id)}
+      style={{width:38,height:38,border:"none",borderRadius:T.r,background:on?T.accentLight:"transparent",color:on?T.accent:T.textMuted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}><Icon size={18}/></button>;})}
+    <div style={{flex:1}}/><ThemeToggle/>
+    <button title="Settings" aria-label="Settings" onClick={onOpenSettings} style={{width:32,height:32,border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,color:T.textMuted,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}}><Ic.Settings size={15}/></button>
+  </nav>;
+}
+
+function StudioToolbar({conn, item, loading, hasAI, showCopilot, onFetch, onOpenSettings, onToggleCopilot, onDisconnect}) {
+  const provider = getAIProvider();
+  return <header style={{height:46,display:"flex",alignItems:"center",gap:8,padding:"0 12px",background:T.bgCard,borderBottom:`1px solid ${T.border}`}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0,marginRight:8}}>
+      <div style={{fontSize:13,fontWeight:800,color:T.text,whiteSpace:"nowrap"}}>QAHub Studio</div>
+      <span style={{fontSize:11,color:T.textFaint}}>Project</span>
+      <span style={{fontSize:12,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:180}}>{conn.projectName}</span>
+    </div>
+    <Btn variant="navy" size="sm" onClick={onFetch} disabled={loading}><Ic.Play size={13}/> Run Query</Btn>
+    <Btn variant="secondary" size="sm" onClick={onFetch} disabled={loading}>{loading?<Spin label=""/>:<Ic.Refresh size={13}/>} Refresh</Btn>
+    <Btn variant={hasAI?"ghost":"amber"} size="sm" onClick={onOpenSettings}><Ic.Settings size={13}/> AI Provider</Btn>
+    <div style={{width:1,height:24,background:T.border,margin:"0 4px"}}/>
+    <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:T.textMuted}}><span style={{width:8,height:8,borderRadius:"50%",background:hasAI?T.green:T.amber,display:"inline-block"}}/><span>{provider}</span></div>
+    <div style={{flex:1,minWidth:0,textAlign:"center",fontSize:11,color:T.textFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item ? `#${item.id} ${item.title}` : "Select a work item from the Flows panel"}</div>
+    <Btn variant={showCopilot?"violet":"secondary"} size="sm" onClick={onToggleCopilot}><Ic.Bot size={13}/> Copilot</Btn>
+    <Btn variant="ghost" size="sm" onClick={onDisconnect}>Disconnect</Btn>
+  </header>;
+}
+
+function StudioInspector({item, qaData, items, hasAI}) {
+  const dimensions = qaData?.review?.dimensions || {};
+  const low = Object.entries(dimensions).filter(([,d])=>Number(d?.score||0)<3);
+  return <aside style={{background:T.bgCard,borderLeft:`1px solid ${T.border}`,display:"flex",flexDirection:"column",minWidth:0}}>
+    <div style={{height:46,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8,padding:"0 12px"}}><Ic.PanelRight size={15}/><div style={{fontSize:12,fontWeight:800,color:T.text}}>Inspector</div></div>
+    <div style={{padding:12,display:"flex",flexDirection:"column",gap:12,overflowY:"auto"}}>
+      <section style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:10}}>
+        <div style={{fontSize:10,fontWeight:800,color:T.textMuted,textTransform:"uppercase",marginBottom:8}}>Selection</div>
+        {item ? <><div style={{fontSize:12,fontWeight:800,color:T.text,lineHeight:1.35,marginBottom:8}}>#{item.id} {item.title}</div><div style={{display:"flex",gap:6,flexWrap:"wrap"}}><StateBadge state={item.state}/><PriChip p={item.priority}/>{item.hasAC&&<span style={{fontSize:10,color:T.green,fontWeight:800}}>AC</span>}</div></> : <div style={{fontSize:12,color:T.textMuted,lineHeight:1.6}}>No work item selected.</div>}
+      </section>
+      <section style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:10}}>
+        <div style={{fontSize:10,fontWeight:800,color:T.textMuted,textTransform:"uppercase",marginBottom:8}}>Quality State</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,fontSize:11,color:T.textMuted}}>
+          <span>Review</span><b style={{color:qaData?.review?T.green:T.textFaint}}>{qaData?.review ? `${qaData.review.score}/10` : "Pending"}</b>
+          <span>Coverage</span><b style={{color:qaData?.coverage?T.green:T.textFaint}}>{qaData?.coverage?.requirementQualityScore?.overallScore || "Pending"}</b>
+          <span>Tests</span><b style={{color:qaData?.testCases?T.green:T.textFaint}}>{qaData?.testCases?.testCases?.length || 0}</b>
+        </div>
+        {low.length>0&&<div style={{marginTop:8,fontSize:11,color:T.amber,lineHeight:1.5}}>{low.length} review dimension{low.length===1?"":"s"} need attention.</div>}
+      </section>
+      <section style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:10}}>
+        <div style={{fontSize:10,fontWeight:800,color:T.textMuted,textTransform:"uppercase",marginBottom:8}}>Studio Context</div>
+        <div style={{fontSize:11,color:T.textMuted,lineHeight:1.7}}><div>Loaded items: <b style={{color:T.text}}>{items.length}</b></div><div>AI configured: <b style={{color:hasAI?T.green:T.amber}}>{hasAI ? "Yes" : "No"}</b></div><div>Steel tools: <b style={{color:T.green}}>Enabled</b></div><div>RAG: <b style={{color:T.textFaint}}>Ready, disabled</b></div></div>
+      </section>
+    </div>
+  </aside>;
+}
+
 const SK_V = "qa-ado-v6";
 
 // Minimal markdown-ish renderer with code fences + copy buttons.
@@ -2096,6 +2158,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [hasAI, setHasAI] = useState(hasAIConfig());
   const [showCopilot, setShowCopilot] = useState(false);
+  const [studioMode, setStudioMode] = useState("flows");
 
   // Load persisted state
   useEffect(()=>{
@@ -2189,8 +2252,8 @@ export default function App() {
   );
 
   return (
-    <div style={{height:"100vh",display:"grid",gridTemplateColumns:"300px 1fr",overflow:"hidden",background:T.bg,color:T.text,fontFamily:T.font}}>
-      {showSettings && <SettingsPanel onClose={()=>setShowSettings(false)} onSaved={setHasAI}/>} 
+    <div style={{height:"100vh",display:"grid",gridTemplateRows:"46px minmax(0,1fr) 28px",gridTemplateColumns:"48px 320px minmax(0,1fr) 280px",overflow:"hidden",background:T.bg,color:T.text,fontFamily:T.font}}>
+      {showSettings && <SettingsPanel onClose={()=>setShowSettings(false)} onSaved={setHasAI}/>}
       <GlobalCopilotPanel
         open={showCopilot}
         onClose={()=>setShowCopilot(false)}
@@ -2198,46 +2261,71 @@ export default function App() {
         conn={conn}
         hasAI={hasAI}
         onOpenSettings={()=>setShowSettings(true)}/>
-      {/* Floating launcher */}
-      <button onClick={()=>setShowCopilot(v=>!v)}
-        title={showCopilot?"Close Copilot":"Open Copilot Chat"}
-        aria-label={showCopilot?"Close Copilot":"Open Copilot Chat"}
-        style={{position:"fixed",bottom:18,right:18,zIndex:980,width:48,height:48,borderRadius:"50%",border:"none",background:T.navy,color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 6px 18px rgba(0,0,0,0.18)",display:"inline-flex",alignItems:"center",justifyContent:"center"}}>
-        {showCopilot?<Ic.Close size={20}/>:<Ic.Bot size={21}/>}
-      </button>
-      {/* Left — Work Item List */}
-      <div style={{borderRight:`1px solid ${T.border}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+
+      <div style={{gridColumn:"1 / -1",gridRow:1,minWidth:0}}>
+        <StudioToolbar
+          conn={conn}
+          item={selectedItem}
+          loading={loading}
+          hasAI={hasAI}
+          showCopilot={showCopilot}
+          onFetch={()=>doFetch()}
+          onOpenSettings={()=>setShowSettings(true)}
+          onToggleCopilot={()=>setShowCopilot(v=>!v)}
+          onDisconnect={disconnect}/>
+      </div>
+
+      <div style={{gridColumn:1,gridRow:"2 / 4",minHeight:0}}>
+        <StudioRail
+          active={studioMode}
+          onChange={setStudioMode}
+          onOpenCopilot={()=>setShowCopilot(true)}
+          onOpenSettings={()=>setShowSettings(true)}/>
+      </div>
+
+      <aside style={{gridColumn:2,gridRow:2,minHeight:0,minWidth:0,borderRight:`1px solid ${T.border}`,background:T.bgCard,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{height:34,flexShrink:0,padding:"0 10px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
+          <div style={{display:"flex",alignItems:"center",gap:7,fontSize:12,fontWeight:800,color:T.text}}>
+            <Ic.Layers size={14}/>
+            <span>{studioMode==="quality"?"Quality Queue":studioMode==="coverage"?"Coverage Scope":studioMode==="ai"?"AI Workbench":"Flow Explorer"}</span>
+          </div>
+          <span style={{fontSize:10,color:T.textFaint,fontFamily:T.mono}}>{items.length}</span>
+        </div>
         <WorkItemList
           conn={conn} items={items} loading={loading} err={err} lastWiql={lastWiql}
           filters={filters} setFilters={setFilters}
           onFetch={doFetch} onResetFilters={resetFilters}
           areas={areas} iters={iters}
           selectedId={selId} onSelect={item=>setSelId(item.id)}/>
-        {/* Disconnect footer */}
-        <div style={{padding:"6px 10px",borderTop:`1px solid ${T.border}`,background:T.bgMuted,flexShrink:0,display:"flex",gap:6,alignItems:"center"}}>
-          <button onClick={disconnect} style={{flex:1,fontSize:10,color:T.textFaint,background:"none",border:"none",cursor:"pointer",textAlign:"left",padding:"2px 0"}}>
-            ⟵ Disconnect / switch project
-          </button>
-          <ThemeToggle/>
-          <button onClick={()=>setShowSettings(true)} style={{height:32,width:32,color:T.textMuted,background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:T.r,padding:0,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center"}} title="API Key Settings" aria-label="API key settings">
-            <Ic.Settings size={14}/>
-          </button>
+      </aside>
+
+      <main style={{gridColumn:3,gridRow:2,minHeight:0,minWidth:0,overflow:"hidden",padding:10,background:`linear-gradient(${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), linear-gradient(90deg, ${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), ${T.bg}`,backgroundSize:"24px 24px"}}>
+        <div style={{height:"100%",minWidth:0,overflow:"hidden",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,boxShadow:T.sh,display:"flex",flexDirection:"column"}}>
+          <WorkItemDetail
+            item={selectedItem}
+            qaData={selId?{...selectedItem,...selectedQA}:null}
+            onUpdateQA={updateQA}
+            conn={conn}
+            allItems={items}
+            hasAI={hasAI}
+            onOpenSettings={()=>setShowSettings(true)}/>
         </div>
+      </main>
+
+      <div style={{gridColumn:4,gridRow:2,minHeight:0,minWidth:0,overflow:"hidden"}}>
+        <StudioInspector item={selectedItem} qaData={selId?{...selectedItem,...selectedQA}:null} items={items} hasAI={hasAI}/>
       </div>
 
-      {/* Right — Detail Panel */}
-      <div style={{overflow:"hidden",display:"flex",flexDirection:"column"}}>
-        <WorkItemDetail
-          item={selectedItem}
-          qaData={selId?{...selectedItem,...selectedQA}:null}
-          onUpdateQA={updateQA}
-          conn={conn}
-          allItems={items}
-          hasAI={hasAI}
-          onOpenSettings={()=>setShowSettings(true)}/>
+      <div style={{gridColumn:"2 / -1",gridRow:3,minWidth:0,display:"flex",alignItems:"center",gap:12,padding:"0 10px",borderTop:`1px solid ${T.border}`,background:T.bgMuted,color:T.textFaint,fontSize:11}}>
+        <span style={{display:"inline-flex",alignItems:"center",gap:5,color:T.textMuted}}><Ic.Plug size={12}/> Connected</span>
+        <span style={{fontFamily:T.mono,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:260}}>{conn.org}/{conn.projectName}</span>
+        <span>{items.length} work items</span>
+        <span>{selectedItem?`Selected #${selectedItem.id}`:"No selection"}</span>
+        <span style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:5}}><Ic.Bot size={12}/> {getAIProvider()} {hasAI?"ready":"not configured"}</span>
       </div>
 
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
+
 }
