@@ -335,7 +335,8 @@ async function adoListProjects(org, pat) {
 
 async function adoAreaPaths(org, project, pat) {
   const d = await adoFetch(`${adoBase(org)}/${encodeURIComponent(project)}/_apis/wit/classificationnodes/areas?$depth=5&api-version=7.1`, pat);
-  const flat=[]; function walk(n,p){const path=p?`${p}\\${n.name}`:n.name;flat.push(path);(n.children||[]).forEach(c=>walk(c,path));} walk(d,""); return flat;
+  const flat=[]; function walk(n,p){const path=p?`${p}\\${n.name}`:n.name;flat.push(path);(n.children||[]).forEach(c=>walk(c,path));} walk(d,"");
+  return flat.sort((a,b)=>a.localeCompare(b, undefined, { sensitivity:"base", numeric:true }));
 }
 async function adoIterPaths(org, project, pat) {
   const d = await adoFetch(`${adoBase(org)}/${encodeURIComponent(project)}/_apis/wit/classificationnodes/iterations?$depth=5&api-version=7.1`, pat);
@@ -1189,8 +1190,10 @@ function ConnectScreen({onConnect}) {
 function WorkItemList({conn, items, loading, err, lastWiql, filters, setFilters, onFetch, onResetFilters, areas, iters, selectedId, onSelect}) {
   const [search,setSearch]=useState("");
   const [showDebug,setShowDebug]=useState(false);
+  const hasActiveFilters = !!(filters.types?.length || filters.states?.length || filters.areaPath || filters.iterPath || filters.assignedTo);
 
   const displayed = items.filter(item=> {
+    if (!itemMatchesFilters(item, filters)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     return String(item.id).includes(s) || item.title.toLowerCase().includes(s) || item.type.toLowerCase().includes(s);
@@ -1299,7 +1302,7 @@ function WorkItemList({conn, items, loading, err, lastWiql, filters, setFilters,
 
       {/* Count bar */}
       <div style={{padding:"4px 10px",borderBottom:`1px solid ${T.border}`,fontSize:10,color:T.textFaint,flexShrink:0,display:"flex",justifyContent:"space-between"}}>
-        <span>{displayed.length} item{displayed.length!==1?"s":""}{items.length!==displayed.length?` (${items.length} total)`:""}</span>
+        <span>{displayed.length} scoped item{displayed.length!==1?"s":""}{items.length!==displayed.length?` (${items.length} loaded)`:""}{hasActiveFilters?" · filters active":""}</span>
         {loading&&<Spin label="" size={10}/>}
       </div>
 
@@ -1655,6 +1658,14 @@ const isStoryLike = item => STORY_TYPES.has(item.type) || /story|backlog|feature
 const isQAState = item => QA_STATES.has(item.state) || /\bqa\b|test/i.test(item.state||"");
 const isUATState = item => UAT_STATES.has(item.state) || /\buat\b|user acceptance/i.test(`${item.state} ${item.tags} ${item.iterationPath}`);
 const pendingDays = item => daysSince(item.stateChangeDate || item.changedDate || item.createdDate);
+function itemMatchesFilters(item, filters={}) {
+  if (filters.types?.length && !filters.types.includes(item.type)) return false;
+  if (filters.states?.length && !filters.states.includes(item.state)) return false;
+  if (filters.areaPath && !String(item.areaPath||"").startsWith(filters.areaPath)) return false;
+  if (filters.iterPath && !String(item.iterationPath||"").startsWith(filters.iterPath)) return false;
+  if (filters.assignedTo && !String(item.assignedTo||"").toLowerCase().includes(filters.assignedTo.toLowerCase())) return false;
+  return true;
+}
 function pendingReason(item, qa={}) {
   const reasons = [];
   const text = `${item.title} ${item.tags} ${item.description} ${item.acceptanceCriteria}`.toLowerCase();
@@ -1697,7 +1708,7 @@ function downloadReport(name, content, type="text/plain") {
   a.click();
 }
 function ReportsPanel({items, qaStore, conn, onSelect}) {
-  const [view,setView]=useState("pending");
+  const [view,setView]=useState("all");
   const report = useMemo(()=>buildReport(items, qaStore),[items, qaStore]);
   const esc=v=>`"${String(v??"").replace(/"/g,'""')}"`;
   const md=v=>String(v??"").replace(/\|/g,"/").replace(/\r?\n/g," ").trim();
@@ -1739,7 +1750,7 @@ function ReportsPanel({items, qaStore, conn, onSelect}) {
   const Tile=({label,value,sub,color=T.text})=><div style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,padding:12}}><div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:T.textMuted,marginBottom:6}}>{label}</div><div style={{fontSize:26,fontWeight:800,color}}>{value}</div>{sub&&<div style={{fontSize:11,color:T.textFaint,marginTop:3}}>{sub}</div>}</div>;
   return <div style={{height:"100%",display:"flex",flexDirection:"column",background:T.bgCard}}>
     <div style={{height:46,display:"flex",alignItems:"center",gap:8,padding:"0 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
-      <Ic.BarChart size={16}/><b style={{fontSize:13}}>Reports</b><span style={{fontSize:11,color:T.textFaint}}>QA / UAT aging and complete test plan summary</span>
+      <Ic.BarChart size={16}/><b style={{fontSize:13}}>Reports</b><span style={{fontSize:11,color:T.textFaint}}>QA / UAT aging and complete test plan summary · scoped to {items.length} loaded item{items.length===1?"":"s"}</span>
       <div style={{marginLeft:"auto",display:"flex",gap:6}}><Btn size="sm" variant="ghost" onClick={exportCSV}><Ic.Download size={12}/> CSV</Btn><Btn size="sm" variant="ghost" onClick={exportMD}><Ic.FileText size={12}/> Plan</Btn><Btn size="sm" variant="ghost" onClick={exportJSON}>JSON</Btn></div>
     </div>
     <div style={{padding:12,borderBottom:`1px solid ${T.border}`,display:"grid",gridTemplateColumns:"repeat(5,minmax(0,1fr))",gap:10}}>
@@ -1750,9 +1761,10 @@ function ReportsPanel({items, qaStore, conn, onSelect}) {
       <Tile label="Releases" value={report.releases.length} sub={conn?.projectName}/>
     </div>
     <div style={{display:"flex",gap:4,padding:"6px 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
-      {[["pending","Pending QA/UAT"],["release","Release Rollup"],["plan","Test Plan Coverage"],["complete","Complete Report"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
+      {[["all",`All Stories (${report.stories.length})`],["pending",`Pending QA/UAT (${report.pendingRows.length})`],["release",`Release Rollup (${report.releases.length})`],["plan",`Test Plan Coverage (${report.stories.length})`],["complete","Complete Report"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
     </div>
     <div style={{flex:1,overflow:"auto",padding:12}}>
+      {view==="all"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["ID","Title","Type","State","Days","Release","Owner","QA/UAT"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.stories.map(item=><tr key={item.id} onClick={()=>onSelect?.(item.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{item.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{item.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{item.type}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{item.state}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:pendingDays(item)>=5?T.red:T.text}}>{pendingDays(item)}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{(item.iterationPath||"Unassigned").split("\\").pop()}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{item.assignedTo||"Unassigned"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:isQAState(item)?T.amber:isUATState(item)?T.violet:T.textMuted}}>{isQAState(item)?"QA":isUATState(item)?"UAT":"-"}</td></tr>)}</tbody></table>}
       {view==="pending"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["Stage","ID","Title","State","Days","Release","Owner","Reason"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.pendingRows.map(r=><tr key={`${r.stage}-${r.id}`} onClick={()=>onSelect?.(r.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.stage}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{r.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{r.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.state}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:r.days>=5?T.red:T.text}}>{r.days}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.release.split("\\").pop()}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.owner}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted}}>{r.reason}</td></tr>)}</tbody></table>}
       {view==="release"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:10}}>{report.releases.map(r=><div key={r.release} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:13,fontWeight:800,marginBottom:8}}>{r.release.split("\\").pop()}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,color:T.textMuted}}><span>Total</span><b>{r.total}</b><span>Open</span><b>{r.open}</b><span>QA Pending</span><b style={{color:r.qaPending?T.amber:T.green}}>{r.qaPending}</b><span>UAT Pending</span><b style={{color:r.uatPending?T.violet:T.green}}>{r.uatPending}</b><span>Avg Pending Days</span><b>{r.avgPendingDays}</b><span>Blockers</span><b style={{color:r.blockers?T.red:T.green}}>{r.blockers}</b></div></div>)}</div>}
       {view==="plan"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["ID","Story","AC","Plan/Cases","Review","Coverage","Release"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.stories.map(item=>{const qa=qaStore[item.id]||{};return <tr key={item.id} onClick={()=>onSelect?.(item.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{item.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{item.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:item.hasAC?T.green:T.red}}>{item.hasAC?"Yes":"Missing"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:(item.testPlan||qa.testCases)?T.green:T.red}}>{qa.testCases?.testCases?.length ? `${qa.testCases.testCases.length} cases` : item.testPlan ? "ADO plan" : "Missing"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{qa.review?`${qa.review.score}/10`:"Pending"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{qa.coverage?.requirementQualityScore?.overallScore||"Pending"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{(item.iterationPath||"Unassigned").split("\\").pop()}</td></tr>})}</tbody></table>}
@@ -2407,6 +2419,7 @@ export default function App() {
 
   const selectedItem = items.find(i=>i.id===selId)||null;
   const selectedQA   = selId ? (qaStore[selId]||{}) : {};
+  const scopedItems = items.filter(item=>itemMatchesFilters(item, filters));
 
   const updateQA = (data) => {
     if(!selId) return;
@@ -2482,7 +2495,7 @@ export default function App() {
       <main style={{gridColumn:3,gridRow:2,minHeight:0,minWidth:0,overflow:"hidden",padding:10,background:`linear-gradient(${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), linear-gradient(90deg, ${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), ${T.bg}`,backgroundSize:"24px 24px"}}>
         <div style={{height:"100%",minWidth:0,overflow:"hidden",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,boxShadow:T.sh,display:"flex",flexDirection:"column"}}>
           {studioMode==="reports"
-            ? <ReportsPanel items={items} qaStore={qaStore} conn={conn} onSelect={id=>{setSelId(id);setStudioMode("flows");}}/>
+            ? <ReportsPanel items={scopedItems} qaStore={qaStore} conn={conn} onSelect={id=>{setSelId(id);setStudioMode("flows");}}/>
             : <WorkItemDetail
                 item={selectedItem}
                 qaData={selId?{...selectedItem,...selectedQA}:null}
