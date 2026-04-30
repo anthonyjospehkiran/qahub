@@ -1700,13 +1700,40 @@ function ReportsPanel({items, qaStore, conn, onSelect}) {
   const [view,setView]=useState("pending");
   const report = useMemo(()=>buildReport(items, qaStore),[items, qaStore]);
   const esc=v=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const md=v=>String(v??"").replace(/\|/g,"/").replace(/\r?\n/g," ").trim();
+  const excerpt=(v,n=450)=>{const s=md(v); return s.length>n ? `${s.slice(0,n)}...` : s;};
   const exportCSV=()=>{
     const rows = report.pendingRows.map(r=>[r.stage,r.id,r.title,r.type,r.state,r.release,r.owner,r.days,r.reason].map(esc).join(","));
     downloadReport("qahub-pending-qa-uat-report.csv", ["Stage,ID,Title,Type,State,Release,Owner,Pending Days,Reason",...rows].join("\n"), "text/csv");
   };
   const exportJSON=()=>downloadReport("qahub-test-plan-report.json", JSON.stringify({project:conn?.projectName, generatedAt:now(), ...report}, null, 2), "application/json");
   const exportMD=()=>{
-    const lines = [`# QAHub Test Plan Report`, ``, `Project: ${conn?.projectName||""}`, `Generated: ${new Date().toLocaleString()}`, ``, `## Summary`, `- User stories/features: ${report.stories.length}`, `- Open stories: ${report.openStories.length}`, `- Pending QA testing: ${report.qaPending.length} (avg ${report.avgQaDays} days)`, `- Pending UAT testing: ${report.uatPending.length} (avg ${report.avgUatDays} days)`, `- Missing test plan/cases: ${report.missingPlan.length}`, ``, `## Pending QA/UAT`, `| Stage | ID | State | Days | Release | Owner | Reason |`, `|---|---:|---|---:|---|---|---|`, ...report.pendingRows.map(r=>`| ${r.stage} | ${r.id} | ${r.state} | ${r.days} | ${r.release} | ${r.owner} | ${r.reason} |`), ``, `## Release Rollup`, `| Release | Total | Open | QA Pending | UAT Pending | Avg Days | Blockers |`, `|---|---:|---:|---:|---:|---:|---:|`, ...report.releases.map(r=>`| ${r.release} | ${r.total} | ${r.open} | ${r.qaPending} | ${r.uatPending} | ${r.avgPendingDays} | ${r.blockers} |`)];
+    const coverageRows = report.stories.map(item=>{
+      const qa=qaStore[item.id]||{};
+      return `| ${item.id} | ${md(item.title)} | ${item.hasAC?"Yes":"Missing"} | ${qa.testCases?.testCases?.length ? `${qa.testCases.testCases.length} generated` : item.testPlan ? "ADO plan" : "Missing"} | ${qa.review?`${qa.review.score}/10`:"Pending"} | ${qa.coverage?.requirementQualityScore?.overallScore||"Pending"} | ${md(item.iterationPath||"Unassigned")} |`;
+    });
+    const storySections = report.stories.flatMap(item=>{
+      const qa=qaStore[item.id]||{};
+      const cases = qa.testCases?.testCases || [];
+      return [
+        ``,
+        `### #${item.id} ${md(item.title)}`,
+        `- Type: ${md(item.type)} | State: ${md(item.state)} | Priority: ${md(item.priority)} | Owner: ${md(item.assignedTo||"Unassigned")}`,
+        `- Release/Iteration: ${md(item.iterationPath||"Unassigned")}`,
+        `- Pending days: ${pendingDays(item)} | Pending reason: ${md(pendingReason(item, qa))}`,
+        `- Acceptance criteria: ${item.hasAC ? "Present" : "Missing"}`,
+        `- Test plan source: ${cases.length ? "QAHub generated test cases" : item.testPlan ? "ADO test plan field" : "Missing"}`,
+        item.acceptanceCriteria ? `- Acceptance criteria excerpt: ${excerpt(item.acceptanceCriteria, 600)}` : `- Acceptance criteria excerpt: Missing`,
+        item.testPlan ? `- ADO test plan excerpt: ${excerpt(item.testPlan, 600)}` : `- ADO test plan excerpt: Not available`,
+        qa.review ? `- AI review: ${qa.review.score}/10 - ${excerpt(qa.review.summary, 300)}` : `- AI review: Pending`,
+        qa.coverage?.finalQARecommendation ? `- Coverage recommendation: ${qa.coverage.finalQARecommendation.status} - ${excerpt(qa.coverage.finalQARecommendation.reason, 300)}` : `- Coverage recommendation: Pending`,
+        cases.length ? `` : null,
+        cases.length ? `| Test Case | Priority | Category | Automatable | Title |` : null,
+        cases.length ? `|---|---|---|---|---|` : null,
+        ...cases.map(tc=>`| ${md(tc.id)} | ${md(tc.priority)} | ${md(tc.category)} | ${tc.automatable?"Yes":"No"} | ${md(tc.title)} |`)
+      ].filter(Boolean);
+    });
+    const lines = [`# QAHub Complete Test Plan Report`, ``, `Project: ${conn?.projectName||""}`, `Generated: ${new Date().toLocaleString()}`, ``, `## Executive Summary`, `- User stories/features in scope: ${report.stories.length}`, `- Open stories/features: ${report.openStories.length}`, `- Pending QA testing: ${report.qaPending.length} (average ${report.avgQaDays} days)`, `- Pending UAT testing: ${report.uatPending.length} (average ${report.avgUatDays} days)`, `- Stories missing test plan or generated cases: ${report.missingPlan.length}`, ``, `## Pending QA/UAT Aging`, `| Stage | ID | State | Days | Release | Owner | Reason |`, `|---|---:|---|---:|---|---|---|`, ...report.pendingRows.map(r=>`| ${r.stage} | ${r.id} | ${md(r.state)} | ${r.days} | ${md(r.release)} | ${md(r.owner)} | ${md(r.reason)} |`), ``, `## Release Readiness Rollup`, `| Release | Total | Open | QA Pending | UAT Pending | Avg Days | Blockers |`, `|---|---:|---:|---:|---:|---:|---:|`, ...report.releases.map(r=>`| ${md(r.release)} | ${r.total} | ${r.open} | ${r.qaPending} | ${r.uatPending} | ${r.avgPendingDays} | ${r.blockers} |`), ``, `## Test Plan Coverage Matrix`, `| ID | Story | AC | Plan/Cases | Review | Coverage | Release |`, `|---:|---|---|---|---|---|---|`, ...coverageRows, ``, `## Detailed Story Test Plans`, ...storySections];
     downloadReport("qahub-test-plan-report.md", lines.join("\n"), "text/markdown");
   };
   const Tile=({label,value,sub,color=T.text})=><div style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,padding:12}}><div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:T.textMuted,marginBottom:6}}>{label}</div><div style={{fontSize:26,fontWeight:800,color}}>{value}</div>{sub&&<div style={{fontSize:11,color:T.textFaint,marginTop:3}}>{sub}</div>}</div>;
@@ -1723,12 +1750,33 @@ function ReportsPanel({items, qaStore, conn, onSelect}) {
       <Tile label="Releases" value={report.releases.length} sub={conn?.projectName}/>
     </div>
     <div style={{display:"flex",gap:4,padding:"6px 12px",borderBottom:`1px solid ${T.border}`,background:T.bgMuted}}>
-      {[["pending","Pending QA/UAT"],["release","Release Rollup"],["plan","Test Plan Coverage"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
+      {[["pending","Pending QA/UAT"],["release","Release Rollup"],["plan","Test Plan Coverage"],["complete","Complete Report"]].map(([id,label])=><button key={id} onClick={()=>setView(id)} style={{padding:"5px 10px",border:"none",borderRadius:T.r,background:view===id?T.bgCard:"transparent",color:view===id?T.accent:T.textMuted,fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>)}
     </div>
     <div style={{flex:1,overflow:"auto",padding:12}}>
       {view==="pending"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["Stage","ID","Title","State","Days","Release","Owner","Reason"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.pendingRows.map(r=><tr key={`${r.stage}-${r.id}`} onClick={()=>onSelect?.(r.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.stage}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{r.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{r.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.state}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:r.days>=5?T.red:T.text}}>{r.days}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.release.split("\\").pop()}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{r.owner}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted}}>{r.reason}</td></tr>)}</tbody></table>}
       {view==="release"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:10}}>{report.releases.map(r=><div key={r.release} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:13,fontWeight:800,marginBottom:8}}>{r.release.split("\\").pop()}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:11,color:T.textMuted}}><span>Total</span><b>{r.total}</b><span>Open</span><b>{r.open}</b><span>QA Pending</span><b style={{color:r.qaPending?T.amber:T.green}}>{r.qaPending}</b><span>UAT Pending</span><b style={{color:r.uatPending?T.violet:T.green}}>{r.uatPending}</b><span>Avg Pending Days</span><b>{r.avgPendingDays}</b><span>Blockers</span><b style={{color:r.blockers?T.red:T.green}}>{r.blockers}</b></div></div>)}</div>}
       {view==="plan"&&<table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["ID","Story","AC","Plan/Cases","Review","Coverage","Release"].map(h=><th key={h} style={{textAlign:"left",padding:"7px 8px",borderBottom:`1px solid ${T.border}`,color:T.textMuted,fontSize:10,textTransform:"uppercase"}}>{h}</th>)}</tr></thead><tbody>{report.stories.map(item=>{const qa=qaStore[item.id]||{};return <tr key={item.id} onClick={()=>onSelect?.(item.id)} style={{cursor:"pointer"}}><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontFamily:T.mono}}>#{item.id}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,fontWeight:700}}>{item.title}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:item.hasAC?T.green:T.red}}>{item.hasAC?"Yes":"Missing"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`,color:(item.testPlan||qa.testCases)?T.green:T.red}}>{qa.testCases?.testCases?.length ? `${qa.testCases.testCases.length} cases` : item.testPlan ? "ADO plan" : "Missing"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{qa.review?`${qa.review.score}/10`:"Pending"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{qa.coverage?.requirementQualityScore?.overallScore||"Pending"}</td><td style={{padding:"8px",borderBottom:`1px solid ${T.border}`}}>{(item.iterationPath||"Unassigned").split("\\").pop()}</td></tr>})}</tbody></table>}
+      {view==="complete"&&<div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}>
+          <div style={{fontSize:14,fontWeight:800,marginBottom:6}}>Complete Test Plan Report</div>
+          <div style={{fontSize:12,color:T.textMuted,lineHeight:1.7}}>Use this view for release readiness review. It combines pending QA/UAT aging, ownership, pending reason, acceptance criteria, test plan coverage, AI review, coverage score, and generated test cases.</div>
+        </div>
+        {report.stories.map(item=>{const qa=qaStore[item.id]||{};const cases=qa.testCases?.testCases||[];return <div key={item.id} onClick={()=>onSelect?.(item.id)} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,padding:12,cursor:"pointer"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontFamily:T.mono,fontSize:12,color:T.textFaint}}>#{item.id}</span><b style={{fontSize:13,flex:1}}>{item.title}</b><StateBadge state={item.state}/><PriChip p={item.priority}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,fontSize:11,color:T.textMuted,marginBottom:8}}>
+            <div><b style={{color:T.text}}>Release</b><br/>{(item.iterationPath||"Unassigned").split("\\").pop()}</div>
+            <div><b style={{color:T.text}}>Owner</b><br/>{item.assignedTo||"Unassigned"}</div>
+            <div><b style={{color:T.text}}>Pending Days</b><br/><span style={{color:pendingDays(item)>=5?T.red:T.text}}>{pendingDays(item)}</span></div>
+            <div><b style={{color:T.text}}>Plan/Cases</b><br/><span style={{color:(item.testPlan||cases.length)?T.green:T.red}}>{cases.length?`${cases.length} generated`:item.testPlan?"ADO plan":"Missing"}</span></div>
+          </div>
+          <div style={{fontSize:11,color:T.textMuted,lineHeight:1.6,marginBottom:8}}><b style={{color:T.text}}>Pending reason:</b> {pendingReason(item,qa)}</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,fontSize:11}}>
+            <div style={{background:T.bgMuted,borderRadius:T.r,padding:8}}><b>QA Review</b><div style={{color:T.textMuted,marginTop:4}}>{qa.review?`${qa.review.score}/10 - ${qa.review.summary||""}`:"Pending"}</div></div>
+            <div style={{background:T.bgMuted,borderRadius:T.r,padding:8}}><b>Coverage</b><div style={{color:T.textMuted,marginTop:4}}>{qa.coverage?.finalQARecommendation?`${qa.coverage.finalQARecommendation.status}: ${qa.coverage.finalQARecommendation.reason}`:"Pending"}</div></div>
+          </div>
+          {cases.length>0&&<div style={{marginTop:8,fontSize:11,color:T.textMuted}}><b style={{color:T.text}}>Generated cases:</b> {cases.slice(0,6).map(tc=>tc.id||tc.title).join(", ")}{cases.length>6?` +${cases.length-6} more`:""}</div>}
+        </div>})}
+      </div>}
     </div>
   </div>;
 }
