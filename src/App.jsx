@@ -284,25 +284,16 @@ async function _rawFetch(url, pat, opts) {
 }
 
 async function adoFetch(url, pat, opts={}) {
-  try {
-    return await _rawFetch(adoProxyUrl(url), pat, opts);
-  } catch(err) {
-    if (err.message.includes("fetch") || err.message === "Failed to fetch" || err.message.includes("non-JSON")) {
-      throw new Error("Azure DevOps connection failed. Start the bundled server with `npm run server`, then open the app at the server URL, or run Vite on port 3000 so /api/ado can proxy to server.js on port 3001.");
-    }
-    throw err;
-  }
-
-  // Try the bundled server.js proxy first. In Vite dev this is forwarded by
-  // vite.config.js to localhost:3001.
+  let localErr = null;
   try {
     const result = await _rawFetch(adoProxyUrl(url), pat, opts);
     _proxyMode = false;
     _proxyConfirmed = true;
     return result;
-  } catch(localErr) {
-    if (!/Failed to fetch|non-JSON|404|502|proxy/i.test(localErr.message)) throw localErr;
-    console.warn("Local ADO proxy unavailable; trying direct ADO request.", localErr.message);
+  } catch(err) {
+    if (!/Failed to fetch|network|CORS|non-JSON|404|502|proxy/i.test(err.message)) throw err;
+    localErr = err;
+    console.warn("Bundled ADO proxy unavailable; trying direct ADO request.", err.message);
   }
 
   // Try direct second
@@ -327,7 +318,8 @@ async function adoFetch(url, pat, opts={}) {
     return result;
   } catch(proxyErr) {
     if (proxyErr.message.includes("fetch") || proxyErr.message === "Failed to fetch" || proxyErr.message.includes("non-JSON")) {
-      throw new Error("Azure DevOps connection failed. Start the bundled server with `npm run server`, then open the app at the server URL, or run Vite on port 3000 so /api/ado can proxy to server.js on port 3001.");
+      const detail = localErr?.message || proxyErr.message;
+      throw new Error(`Azure DevOps connection failed because /api/ado is not returning JSON. Make sure Azure is running server.js, not a static-only React host. Detail: ${detail}`);
     }
     throw proxyErr;
   }
@@ -1074,13 +1066,19 @@ function ConnectScreen({onConnect}) {
   };
 
   return (
-    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,overflowY:"auto",padding:"20px 0",position:"relative",fontFamily:T.font}}>
-      <div style={{position:"fixed",top:14,right:14,zIndex:5}}><ThemeToggle/></div>
-      <div style={{width:520,display:"flex",flexDirection:"column",gap:0}}>
+    <div style={{height:"100vh",display:"grid",gridTemplateRows:"46px minmax(0,1fr) 28px",gridTemplateColumns:"48px 360px minmax(0,1fr) 280px",overflow:"hidden",background:T.bg,color:T.text,fontFamily:T.font}}>
+      <div style={{gridColumn:"1 / -1",gridRow:1,display:"flex",alignItems:"center",gap:10,padding:"0 12px",borderBottom:`1px solid ${T.border}`,background:T.bgCard}}>
+        <div style={{width:28,height:28,borderRadius:T.r,background:T.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic.Beaker size={16}/></div>
+        <div style={{fontSize:13,fontWeight:800}}>QAHub Studio</div>
+        <span style={{fontSize:11,color:T.textFaint}}>Azure DevOps quality automation workspace</span>
+        <div style={{marginLeft:"auto"}}><ThemeToggle/></div>
+      </div>
+      <StudioRail active="flows" onChange={()=>{}} onOpenCopilot={()=>{}} onOpenSettings={()=>{}}/>
+      <div style={{gridColumn:2,gridRow:2,minHeight:0,overflow:"auto",borderRight:`1px solid ${T.border}`,background:T.bgCard,padding:16}}>
         <div style={{textAlign:"center",marginBottom:20}}>
           <div style={{width:48,height:48,borderRadius:12,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px",color:"#fff"}}><Ic.Beaker size={25}/></div>
-          <h1 style={{fontSize:T.fs.xxl,fontWeight:T.fw.bold,color:T.text,fontFamily:T.fontDisplay,margin:"0 0 6px"}}>QA Intelligence Hub</h1>
-          <p style={{fontSize:13,color:T.textMuted,margin:0,lineHeight:1.6}}>Connect to Azure DevOps to browse work items, review stories, generate test cases, and research testing scope with AI.</p>
+          <h1 style={{fontSize:T.fs.xxl,fontWeight:T.fw.bold,color:T.text,fontFamily:T.fontDisplay,margin:"0 0 6px"}}>Connect Workspace</h1>
+          <p style={{fontSize:13,color:T.textMuted,margin:0,lineHeight:1.6}}>Select your Azure DevOps organization, then open the Studio workspace for QA review, coverage, and test generation.</p>
         </div>
 
         <div style={{background:T.bgCard,borderRadius:T.rLg,border:`1px solid ${T.border}`,padding:24,boxShadow:T.shMd,display:"flex",flexDirection:"column",gap:14}}>
@@ -1137,6 +1135,34 @@ function ConnectScreen({onConnect}) {
         <div style={{marginTop:12,padding:10,background:T.amberBg,border:`1px solid ${T.amberBd}`,borderRadius:T.r,fontSize:11,color:"#78350f",lineHeight:1.7}}>
           <strong>Creating a PAT:</strong> Azure DevOps → top-right avatar → Personal Access Tokens → New Token → Organization: All accessible orgs → Scope: <strong>Work Items: Read</strong> (optionally add Write) → set an expiry → Create → copy the token immediately
         </div>
+      </div>
+
+      <main style={{gridColumn:3,gridRow:2,minHeight:0,overflow:"hidden",padding:10,background:`linear-gradient(${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), linear-gradient(90deg, ${T.gridLine||"rgba(148,163,184,0.12)"} 1px, transparent 1px), ${T.bg}`,backgroundSize:"24px 24px"}}>
+        <div style={{height:"100%",border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgCard,boxShadow:T.sh,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{height:42,padding:"0 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8,background:T.bgMuted}}>
+            <Ic.Layers size={15}/>
+            <div style={{fontSize:12,fontWeight:800}}>Studio Preview</div>
+            <span style={{fontSize:11,color:T.textFaint}}>Connect to load real Azure DevOps flows</span>
+          </div>
+          <div style={{flex:1,display:"grid",placeItems:"center",padding:28,textAlign:"center"}}>
+            <div style={{maxWidth:560}}>
+              <div style={{width:56,height:56,borderRadius:T.r,background:T.accentLight,color:T.accent,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:14}}><Ic.Factory size={28}/></div>
+              <h2 style={{fontSize:24,margin:"0 0 8px",fontWeight:800}}>QAHub Studio</h2>
+              <p style={{fontSize:13,color:T.textMuted,lineHeight:1.7,margin:"0 0 16px"}}>A structured workspace for flow review, AI coverage analysis, steel-domain test generation, and inspection-ready QA evidence.</p>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3, minmax(0,1fr))",gap:10,textAlign:"left"}}>
+                {["Flow Explorer","AI Review","Coverage Inspector"].map((x,i)=><div key={x} style={{border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted,padding:12}}><div style={{fontSize:11,fontWeight:800,color:T.text}}>{x}</div><div style={{fontSize:10,color:T.textFaint,marginTop:5}}>Step {i+1}</div></div>)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <StudioInspector item={null} qaData={null} items={[]} hasAI={hasAIConfig()}/>
+
+      <div style={{gridColumn:"2 / -1",gridRow:3,minWidth:0,display:"flex",alignItems:"center",gap:12,padding:"0 10px",borderTop:`1px solid ${T.border}`,background:T.bgMuted,color:T.textFaint,fontSize:11}}>
+        <span>Not connected</span>
+        <span>ADO proxy: /api/ado</span>
+        <span style={{marginLeft:"auto"}}>NVIDIA / Anthropic / OpenAI routing ready after connect</span>
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
