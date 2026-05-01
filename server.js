@@ -20,7 +20,7 @@ import fetch   from 'node-fetch';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import 'dotenv/config';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -43,10 +43,84 @@ function getSession(req, res) {
     SESSIONS.set(sid, {
       githubToken: '', copilotToken: '', copilotTokenExp: 0,
       lastDeviceCode: '', lastUserCode: '', lastDeviceExp: 0,
+      adoAccessToken: '', adoRefreshToken: '', adoTokenExp: 0,
+      adoUser: null, adoAuthState: '', adoPkceVerifier: '', adoOrg: '',
     });
     res.setHeader('Set-Cookie', `qahub-sid=${sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60*60*24*30}`);
   }
   return SESSIONS.get(sid);
+}
+
+function absoluteUrl(req, path) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${proto}://${host}${path}`;
+}
+
+function base64Url(input) {
+  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const part = String(token || '').split('.')[1];
+    if (!part) return null;
+    return JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function adoAuthConfig(req) {
+  const tenant = process.env.ADO_AUTH_TENANT_ID || process.env.AZURE_TENANT_ID || 'organizations';
+  const clientId = process.env.ADO_AUTH_CLIENT_ID || process.env.AZURE_CLIENT_ID || '';
+  const clientSecret = process.env.ADO_AUTH_CLIENT_SECRET || process.env.AZURE_CLIENT_SECRET || '';
+  const redirectUri = process.env.ADO_AUTH_REDIRECT_URI || absoluteUrl(req, '/api/ado-auth/callback');
+  return { tenant, clientId, clientSecret, redirectUri };
+}
+
+function adoAuthScope() {
+  return process.env.ADO_AUTH_SCOPE || 'openid profile email offline_access 499b84ac-1321-427f-aa17-267ca6975798/.default';
+}
+
+async function exchangeAdoToken(req, params) {
+  const { tenant, clientId, clientSecret, redirectUri } = adoAuthConfig(req);
+  if (!clientId) throw new Error('ADO_AUTH_CLIENT_ID is not configured on the server.');
+  const body = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: adoAuthScope(),
+    ...params,
+  });
+  if (clientSecret) body.set('client_secret', clientSecret);
+  const r = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error_description || data.error || `Microsoft token exchange failed (${r.status}).`);
+  return data;
+}
+
+async function ensureAdoToken(req, session) {
+  if (session.adoAccessToken && Date.now() < session.adoTokenExp - 120_000) return true;
+  if (!session.adoRefreshToken) return false;
+  try {
+    const tok = await exchangeAdoToken(req, {
+      grant_type: 'refresh_token',
+      refresh_token: session.adoRefreshToken,
+    });
+    session.adoAccessToken = tok.access_token || '';
+    session.adoRefreshToken = tok.refresh_token || session.adoRefreshToken;
+    session.adoTokenExp = Date.now() + ((tok.expires_in || 3600) * 1000);
+    return !!session.adoAccessToken;
+  } catch (e) {
+    console.warn('[ado-auth] refresh failed:', e.message);
+    session.adoAccessToken = '';
+    session.adoTokenExp = 0;
+    return false;
+  }
 }
 
 // ── 1. Proxy → Anthropic API ──────────────────────────────────────────────────
@@ -201,19 +275,108 @@ app.get('/api/copilot/models', async (req, res) => {
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
+// Microsoft Entra sign-in for Azure DevOps. Tokens stay server-side in the
+// qahub-sid session; the browser only receives an HttpOnly session cookie.
+app.get('/api/ado-auth/status', async (req, res) => {
+  const session = getSession(req, res);
+  const { clientId, tenant, redirectUri } = adoAuthConfig(req);
+  const authenticated = await ensureAdoToken(req, session);
+  res.json({
+    configured: !!clientId,
+    authenticated,
+    tenant,
+    redirectUri,
+    org: session.adoOrg || '',
+    user: authenticated ? session.adoUser : null,
+  });
+});
+
+app.get('/api/ado-auth/start', (req, res) => {
+  const session = getSession(req, res);
+  const { tenant, clientId, redirectUri } = adoAuthConfig(req);
+  if (!clientId) {
+    return res.redirect('/?adoAuth=missing_config');
+  }
+  const verifier = base64Url(randomBytes(48));
+  const challenge = base64Url(createHash('sha256').update(verifier).digest());
+  const state = base64Url(randomBytes(24));
+  session.adoAuthState = state;
+  session.adoPkceVerifier = verifier;
+  session.adoOrg = String(req.query.org || session.adoOrg || '').trim();
+
+  const authUrl = new URL(`https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/authorize`);
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_mode', 'query');
+  authUrl.searchParams.set('scope', adoAuthScope());
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+  authUrl.searchParams.set('prompt', 'select_account');
+  res.redirect(authUrl.toString());
+});
+
+app.get('/api/ado-auth/callback', async (req, res) => {
+  const session = getSession(req, res);
+  try {
+    if (req.query.error) throw new Error(req.query.error_description || req.query.error);
+    if (!req.query.code) throw new Error('Microsoft did not return an authorization code.');
+    if (!session.adoAuthState || req.query.state !== session.adoAuthState) throw new Error('Invalid sign-in state. Please try again.');
+    const tok = await exchangeAdoToken(req, {
+      grant_type: 'authorization_code',
+      code: String(req.query.code),
+      code_verifier: session.adoPkceVerifier,
+    });
+    const id = decodeJwtPayload(tok.id_token) || {};
+    session.adoAccessToken = tok.access_token || '';
+    session.adoRefreshToken = tok.refresh_token || '';
+    session.adoTokenExp = Date.now() + ((tok.expires_in || 3600) * 1000);
+    session.adoUser = {
+      name: id.name || id.given_name || '',
+      email: id.preferred_username || id.email || id.upn || '',
+      oid: id.oid || id.sub || '',
+      tid: id.tid || '',
+    };
+    session.adoAuthState = '';
+    session.adoPkceVerifier = '';
+    res.redirect('/?adoAuth=success');
+  } catch (err) {
+    console.error('[ado-auth] callback failed:', err.message);
+    res.redirect(`/?adoAuth=error&message=${encodeURIComponent(err.message)}`);
+  }
+});
+
+app.post('/api/ado-auth/logout', (req, res) => {
+  const session = getSession(req, res);
+  session.adoAccessToken = '';
+  session.adoRefreshToken = '';
+  session.adoTokenExp = 0;
+  session.adoUser = null;
+  session.adoOrg = '';
+  res.json({ ok: true });
+});
+
 // ── 2. Proxy → Azure DevOps (eliminates CORS entirely) ───────────────────────
-// Frontend calls /api/ado?url=<encoded_ado_url> with the same method/body/auth.
-// The server re-issues the request server-side — no CORS restrictions.
+// Frontend calls /api/ado?url=<encoded_ado_url>. The server re-issues the
+// request with the signed-in Microsoft user's Azure DevOps bearer token.
 app.all('/api/ado', async (req, res) => {
+  const session = getSession(req, res);
   const target = decodeURIComponent(req.query.url || '');
   if (!target.startsWith('https://dev.azure.com/')) {
     return res.status(400).json({ error: 'Only dev.azure.com URLs are allowed.' });
   }
   try {
+    const hasHeaderAuth = !!req.headers.authorization;
+    const hasSessionAuth = await ensureAdoToken(req, session);
+    const authorization = req.headers.authorization || (hasSessionAuth ? `Bearer ${session.adoAccessToken}` : '');
+    if (!authorization) {
+      return res.status(401).json({ error: 'Not signed in to Microsoft. Click Sign in with Microsoft to access Azure DevOps.' });
+    }
     const upstream = await fetch(target, {
       method:  req.method,
       headers: {
-        'Authorization': req.headers.authorization || '',
+        'Authorization': authorization,
         'Content-Type':  'application/json',
         'Accept':        'application/json',
       },
@@ -228,7 +391,9 @@ app.all('/api/ado', async (req, res) => {
         const preview = text.replace(/\s+/g, ' ').slice(0, 240);
         return res.status(upstream.status || 502).json({
           error: upstream.status === 401
-            ? 'Azure DevOps rejected the PAT or returned its sign-in page. Verify the PAT has Work Items: Read access for this organization.'
+            ? (hasHeaderAuth
+              ? 'Azure DevOps rejected the provided authorization header.'
+              : 'Azure DevOps rejected the Microsoft sign-in token. Confirm this user has access to the organization/project and the app registration has Azure DevOps delegated permissions.')
             : 'Azure DevOps returned non-JSON content.',
           status: upstream.status,
           preview,

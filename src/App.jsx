@@ -249,7 +249,13 @@ function wiqlStr(value) {
 
 // ─── Azure DevOps API ─────────────────────────────────────────────────────────
 function adoBase(org) { return `https://dev.azure.com/${parseOrg(org)}`; }
-function adoHdr(pat)  { return { Authorization:`Basic ${btoa(`:${pat}`)}`, "Content-Type":"application/json", Accept:"application/json" }; }
+function adoHdr(pat)  {
+  return {
+    ...(pat ? { Authorization:`Basic ${btoa(`:${pat}`)}` } : {}),
+    "Content-Type":"application/json",
+    Accept:"application/json"
+  };
+}
 
 // CORS proxy — used automatically when direct requests are blocked (common from browser-based tools)
 let _proxyMode = false;
@@ -264,7 +270,7 @@ function adoProxyUrl(url) {
 }
 
 async function _rawFetch(url, pat, opts) {
-  const res = await fetch(url, { ...opts, headers:{ ...adoHdr(pat), ...(opts.headers||{}) } });
+  const res = await fetch(url, { ...opts, credentials:"include", headers:{ ...adoHdr(pat), ...(opts.headers||{}) } });
   const txt = await res.text();
   let b = {};
   if (txt) {
@@ -275,8 +281,8 @@ async function _rawFetch(url, pat, opts) {
     }
   }
   if (!res.ok) {
-    if (res.status===401) throw new Error("Unauthorized (401) — PAT expired or missing Work Items: Read scope.");
-    if (res.status===403) throw new Error("Forbidden (403) — PAT lacks access to this project.");
+    if (res.status===401) throw new Error(b.error || "Unauthorized (401) — sign in with Microsoft and confirm Azure DevOps access.");
+    if (res.status===403) throw new Error(b.error || "Forbidden (403) — your Microsoft account does not have access to this project.");
     if (res.status===404) throw new Error("Not found (404) — verify org name and project name are correct.");
     throw new Error(b.message || b.error || b.errorCode || `ADO error ${res.status}`);
   }
@@ -284,6 +290,12 @@ async function _rawFetch(url, pat, opts) {
 }
 
 async function adoFetch(url, pat, opts={}) {
+  if (!pat) {
+    const result = await _rawFetch(adoProxyUrl(url), "", opts);
+    _proxyMode = false;
+    _proxyConfirmed = true;
+    return result;
+  }
   let localErr = null;
   try {
     const result = await _rawFetch(adoProxyUrl(url), pat, opts);
@@ -1048,30 +1060,71 @@ function SettingsPanel({ onClose, onSaved }) {
 
 // ─── Connection Screen ────────────────────────────────────────────────────────
 function ConnectScreen({onConnect}) {
-  const [org,setOrg]=useState(""); const [pat,setPat]=useState("");
+  const defaultOrg = (typeof import.meta !== "undefined" ? import.meta.env?.VITE_ADO_ORG : "") || "Nucor-NBT";
+  const preferredProject = (typeof import.meta !== "undefined" ? import.meta.env?.VITE_ADO_PROJECT : "") || localStorage.getItem("qa-hub-last-project") || "NextGen";
+  const [org,setOrg]=useState(defaultOrg);
   const [projs,setProjs]=useState([]); const [loading,setLoading]=useState(false);
   const [err,setErr]=useState(null); const [tested,setTested]=useState(false);
   const [usingProxy,setUsingProxy]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [hasAI,setHasAI]=useState(hasAIConfig());
   const [previewMode,setPreviewMode]=useState("flows");
+  const [auth,setAuth]=useState({checking:true,configured:false,authenticated:false,user:null});
+
+  const refreshAuth = useCallback(async()=>{
+    try {
+      const r = await fetch("/api/ado-auth/status",{credentials:"include"});
+      const d = await r.json();
+      setAuth({checking:false,configured:!!d.configured,authenticated:!!d.authenticated,user:d.user||null,redirectUri:d.redirectUri||"",tenant:d.tenant||""});
+      if(d.org) setOrg(d.org);
+      return d;
+    } catch {
+      setAuth({checking:false,configured:false,authenticated:false,user:null});
+      return null;
+    }
+  },[]);
+
+  useEffect(()=>{
+    const qs = new URLSearchParams(window.location.search);
+    const authResult = qs.get("adoAuth");
+    if(authResult === "missing_config") setErr("Microsoft sign-in is not configured on the server. Add ADO_AUTH_CLIENT_ID and ADO_AUTH_TENANT_ID, then restart QAHub.");
+    if(authResult === "error") setErr(qs.get("message") || "Microsoft sign-in failed.");
+    if(authResult) window.history.replaceState({}, "", window.location.pathname);
+    refreshAuth();
+  },[refreshAuth]);
 
   const handleTest=async()=>{
-    if(!org||!pat){setErr("Both fields required.");return;}
+    if(!org){setErr("Enter your Azure DevOps organization first.");return;}
+    if(!auth.authenticated){setErr("Sign in with Microsoft first.");return;}
     setLoading(true);setErr(null);setProjs([]);setTested(false);setUsingProxy(false);
     try{
-      const list=await adoListProjects(org,pat);
+      const list=await adoListProjects(org,"");
       setProjs(list);setTested(true);
       setUsingProxy(isProxyMode());
+      const preferred = list.find(p=>p.name.toLowerCase() === preferredProject.toLowerCase()) || (list.length===1 ? list[0] : null);
+      if(preferred){
+        localStorage.setItem("qa-hub-last-project", preferred.name);
+        onConnect({org:parseOrg(org),auth:"microsoft",projectId:preferred.id,projectName:preferred.name,connectedAt:now(),user:auth.user});
+      }
     }catch(e){
       // Give a much clearer message for the common CORS case
       if(e.message.includes("Both direct and proxy")){
-        setErr("Connection blocked. Try: (1) check your org name is correct, (2) verify your PAT has Work Items: Read scope, (3) try a different browser or disable browser extensions.");
+        setErr("Connection blocked. Try: (1) check your org name is correct, (2) confirm Microsoft sign-in is configured, (3) verify your account has Azure DevOps access.");
       } else {
         setErr(e.message);
       }
     }
     setLoading(false);
+  };
+
+  useEffect(()=>{
+    if(auth.authenticated && org && !tested && !loading) handleTest();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[auth.authenticated, org]);
+
+  const startMicrosoftSignIn = () => {
+    if(!org){setErr("Enter your Azure DevOps organization first.");return;}
+    window.location.href = `/api/ado-auth/start?org=${encodeURIComponent(parseOrg(org))}`;
   };
 
   return (
@@ -1095,12 +1148,27 @@ function ConnectScreen({onConnect}) {
           <Inp label="Organization URL or Name" required value={org} onChange={v=>setOrg(v)}
             placeholder="Nucor-NBT  or  https://dev.azure.com/Nucor-NBT"
             hint="Paste the full URL or just the org name — both work"/>
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            <label style={{fontSize:11,fontWeight:700,color:T.textMuted,letterSpacing:"0.05em",textTransform:"uppercase"}}>Personal Access Token <span style={{color:T.accent}}>*</span></label>
-            <input type="password" value={pat} onChange={e=>setPat(e.target.value)} placeholder="Paste your PAT here"
-              style={{padding:"7px 10px",border:`1.5px solid ${T.border}`,borderRadius:T.r,fontFamily:"monospace",fontSize:12,color:T.text,background:T.bgCard,outline:"none"}}
-              onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
-            <span style={{fontSize:10,color:T.textFaint}}>ADO → top-right avatar → Personal Access Tokens → New Token → scope: <strong>Work Items: Read</strong> (+ Write to post comments back)</span>
+          <div style={{display:"flex",flexDirection:"column",gap:8,padding:12,border:`1px solid ${T.border}`,borderRadius:T.r,background:T.bgMuted}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{width:30,height:30,borderRadius:T.r,background:"#2563eb",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900}}>M</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:800,color:T.text}}>Microsoft authentication</div>
+                <div style={{fontSize:10,color:T.textFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {auth.checking ? "Checking sign-in..." : auth.authenticated ? `${auth.user?.name || auth.user?.email || "Signed in"}` : auth.configured ? "Sign in with your Nucor Microsoft account" : "Server needs Microsoft app registration settings"}
+                </div>
+              </div>
+              {auth.authenticated && <span style={{fontSize:10,fontWeight:800,color:T.green}}>Signed in</span>}
+            </div>
+            {!auth.authenticated && (
+              <Btn variant="navy" onClick={startMicrosoftSignIn} disabled={auth.checking||!auth.configured||!org} style={{width:"100%",justifyContent:"center"}}>
+                <Ic.Plug size={14}/> Sign in with Microsoft
+              </Btn>
+            )}
+            {!auth.configured && !auth.checking && (
+              <div style={{fontSize:10,color:T.amber,lineHeight:1.6}}>
+                Configure <code>ADO_AUTH_CLIENT_ID</code>, <code>ADO_AUTH_TENANT_ID</code>, and the redirect URI shown in server logs/Azure App Registration.
+              </div>
+            )}
           </div>
 
           {err&&(
@@ -1121,11 +1189,11 @@ function ConnectScreen({onConnect}) {
               <div style={{fontSize:12,color:T.green,fontWeight:600}}>✓ {projs.length} project{projs.length!==1?"s":""} found — select one to open:</div>
               <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:220,overflowY:"auto"}}>
                 {projs.map(p=>(
-                  <button key={p.id} onClick={()=>onConnect({org:parseOrg(org),pat,projectId:p.id,projectName:p.name,connectedAt:now()})}
+                  <button key={p.id} onClick={()=>{localStorage.setItem("qa-hub-last-project", p.name);onConnect({org:parseOrg(org),auth:"microsoft",projectId:p.id,projectName:p.name,connectedAt:now(),user:auth.user});}}
                     style={{textAlign:"left",padding:"10px 14px",borderRadius:T.r,border:`1.5px solid ${T.border}`,background:T.bgCard,cursor:"pointer",display:"flex",alignItems:"center",gap:10,transition:"all 0.15s"}}
                     onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=T.accentLight;}}
                     onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=T.bgCard;}}>
-                    <span style={{fontSize:18}}>📋</span>
+                    <Ic.FileText size={17}/>
                     <div style={{flex:1}}>
                       <div style={{fontSize:13,fontWeight:600,color:T.text}}>{p.name}</div>
                       <div style={{fontSize:10,color:T.textMuted}}>{p.description?.slice(0,80)||"Click to open this project →"}</div>
@@ -1137,13 +1205,9 @@ function ConnectScreen({onConnect}) {
             </div>
           )}
 
-          <Btn variant="navy" onClick={handleTest} disabled={loading||!org||!pat} style={{width:"100%",justifyContent:"center"}}>
-            {loading?<Spin label="Connecting…"/>:<><Ic.Plug size={14}/> Connect & List Projects</>}
+          <Btn variant="navy" onClick={auth.authenticated ? handleTest : startMicrosoftSignIn} disabled={loading||!org||auth.checking||(!auth.configured&&!auth.authenticated)} style={{width:"100%",justifyContent:"center"}}>
+            {loading?<Spin label="Loading Azure DevOps…"/>:auth.authenticated?<><Ic.Plug size={14}/> Open Azure DevOps Workspace</>:<><Ic.Plug size={14}/> Sign in & Load Workspace</>}
           </Btn>
-        </div>
-
-        <div style={{marginTop:12,padding:10,background:T.amberBg,border:`1px solid ${T.amberBd}`,borderRadius:T.r,fontSize:11,color:"#78350f",lineHeight:1.7}}>
-          <strong>Creating a PAT:</strong> Azure DevOps → top-right avatar → Personal Access Tokens → New Token → Organization: All accessible orgs → Scope: <strong>Work Items: Read</strong> (optionally add Write) → set an expiry → Create → copy the token immediately
         </div>
       </div>
 
@@ -2471,7 +2535,7 @@ export default function App() {
   useEffect(()=>{
     loadDB().then(db=>{
       if(db){
-        if(db.conn?.pat) setConn(db.conn);
+        if(db.conn?.projectName && (db.conn?.auth === "microsoft" || db.conn?.pat)) setConn(db.conn);
         if(db.qaStore)  setQaStore(db.qaStore);
         if(db.filters)  setFilters(db.filters);
       }
@@ -2484,7 +2548,7 @@ export default function App() {
     if(!booting) saveDB({conn,qaStore,filters});
   },[conn,qaStore,filters,booting]);
 
-  // Keep PAT in memory only and clear it after inactivity.
+  // Keep fallback PAT in memory only and clear it after inactivity.
   useEffect(()=>{
     if(!conn?.pat) return;
     let t;
@@ -2542,6 +2606,7 @@ export default function App() {
   };
 
   const disconnect = () => {
+    fetch("/api/ado-auth/logout",{method:"POST",credentials:"include"}).catch(()=>{});
     setConn(null); setItems([]); setSelId(null); setQaStore({}); setFilters({types:[],states:[],areaPath:"",iterPath:"",assignedTo:""});
   };
 
