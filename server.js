@@ -108,7 +108,8 @@ function adoAuthConfig(req) {
   const tenant = cleanTenant(process.env.ADO_AUTH_TENANT_ID || process.env.AZURE_TENANT_ID || 'organizations');
   const clientId = pickQueryOrRaw(process.env.ADO_AUTH_CLIENT_ID || process.env.AZURE_CLIENT_ID || '', 'client_id');
   const clientSecret = pickQueryOrRaw(process.env.ADO_AUTH_CLIENT_SECRET || process.env.AZURE_CLIENT_SECRET || '', 'client_secret');
-  const redirectUri = cleanEnvValue(process.env.ADO_AUTH_REDIRECT_URI || absoluteUrl(req, '/api/ado-auth/callback'));
+  const configuredRedirect = cleanEnvValue(process.env.ADO_AUTH_REDIRECT_URI);
+  const redirectUri = configuredRedirect || absoluteUrl(req, '/api/ado-auth/callback');
   return { tenant, clientId, clientSecret, redirectUri };
 }
 
