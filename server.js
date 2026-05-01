@@ -295,7 +295,7 @@ app.get('/api/ado-auth/start', (req, res) => {
   const session = getSession(req, res);
   const { tenant, clientId, redirectUri } = adoAuthConfig(req);
   if (!clientId) {
-    return res.redirect('/?adoAuth=missing_config');
+    return res.redirect(`/?adoAuth=missing_config&message=${encodeURIComponent('Microsoft sign-in is not configured on the server. Add ADO_AUTH_CLIENT_ID and ADO_AUTH_TENANT_ID in Azure App Service settings, then restart the app.')}`);
   }
   const verifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(verifier).digest());

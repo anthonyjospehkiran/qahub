@@ -1087,7 +1087,7 @@ function ConnectScreen({onConnect}) {
   useEffect(()=>{
     const qs = new URLSearchParams(window.location.search);
     const authResult = qs.get("adoAuth");
-    if(authResult === "missing_config") setErr("Microsoft sign-in is not configured on the server. Add ADO_AUTH_CLIENT_ID and ADO_AUTH_TENANT_ID, then restart QAHub.");
+    if(authResult === "missing_config") setErr(qs.get("message") || "Microsoft sign-in is not configured on the server. Add ADO_AUTH_CLIENT_ID and ADO_AUTH_TENANT_ID, then restart QAHub.");
     if(authResult === "error") setErr(qs.get("message") || "Microsoft sign-in failed.");
     if(authResult) window.history.replaceState({}, "", window.location.pathname);
     refreshAuth();
@@ -1154,19 +1154,19 @@ function ConnectScreen({onConnect}) {
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12,fontWeight:800,color:T.text}}>Microsoft authentication</div>
                 <div style={{fontSize:10,color:T.textFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  {auth.checking ? "Checking sign-in..." : auth.authenticated ? `${auth.user?.name || auth.user?.email || "Signed in"}` : auth.configured ? "Sign in with your Nucor Microsoft account" : "Server needs Microsoft app registration settings"}
+                  {auth.checking ? "Checking sign-in..." : auth.authenticated ? `${auth.user?.name || auth.user?.email || "Signed in"}` : auth.configured ? "Sign in with your Nucor Microsoft account" : "Microsoft app registration is not configured yet"}
                 </div>
               </div>
               {auth.authenticated && <span style={{fontSize:10,fontWeight:800,color:T.green}}>Signed in</span>}
             </div>
             {!auth.authenticated && (
-              <Btn variant="navy" onClick={startMicrosoftSignIn} disabled={auth.checking||!auth.configured||!org} style={{width:"100%",justifyContent:"center"}}>
+              <Btn variant="navy" onClick={startMicrosoftSignIn} disabled={auth.checking||!org} style={{width:"100%",justifyContent:"center"}}>
                 <Ic.Plug size={14}/> Sign in with Microsoft
               </Btn>
             )}
             {!auth.configured && !auth.checking && (
               <div style={{fontSize:10,color:T.amber,lineHeight:1.6}}>
-                Configure <code>ADO_AUTH_CLIENT_ID</code>, <code>ADO_AUTH_TENANT_ID</code>, and the redirect URI shown in server logs/Azure App Registration.
+                You can click sign in, but it will not complete until Azure App Service has <code>ADO_AUTH_CLIENT_ID</code>, <code>ADO_AUTH_TENANT_ID</code>, and the callback URL registered in Microsoft Entra.
               </div>
             )}
           </div>
@@ -1205,7 +1205,7 @@ function ConnectScreen({onConnect}) {
             </div>
           )}
 
-          <Btn variant="navy" onClick={auth.authenticated ? handleTest : startMicrosoftSignIn} disabled={loading||!org||auth.checking||(!auth.configured&&!auth.authenticated)} style={{width:"100%",justifyContent:"center"}}>
+          <Btn variant="navy" onClick={auth.authenticated ? handleTest : startMicrosoftSignIn} disabled={loading||!org||auth.checking} style={{width:"100%",justifyContent:"center"}}>
             {loading?<Spin label="Loading Azure DevOps…"/>:auth.authenticated?<><Ic.Plug size={14}/> Open Azure DevOps Workspace</>:<><Ic.Plug size={14}/> Sign in & Load Workspace</>}
           </Btn>
         </div>
