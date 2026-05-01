@@ -281,7 +281,7 @@ async function _rawFetch(url, pat, opts) {
     }
   }
   if (!res.ok) {
-    if (res.status===401) throw new Error(b.error || "Unauthorized (401) — sign in with Microsoft and confirm Azure DevOps access.");
+    if (res.status===401) throw new Error(b.error || "Unauthorized (401) - verify the server-side Azure DevOps credential.");
     if (res.status===403) throw new Error(b.error || "Forbidden (403) — your Microsoft account does not have access to this project.");
     if (res.status===404) throw new Error("Not found (404) — verify org name and project name are correct.");
     throw new Error(b.message || b.error || b.errorCode || `ADO error ${res.status}`);
@@ -1069,47 +1069,42 @@ function ConnectScreen({onConnect}) {
   const [showSettings,setShowSettings]=useState(false);
   const [hasAI,setHasAI]=useState(hasAIConfig());
   const [previewMode,setPreviewMode]=useState("flows");
-  const [auth,setAuth]=useState({checking:true,configured:false,authenticated:false,user:null});
+  const [defaultAdo,setDefaultAdo]=useState({checking:true,configured:false,org:defaultOrg,project:preferredProject,hasPat:false});
 
-  const refreshAuth = useCallback(async()=>{
+  const refreshDefaultAdo = useCallback(async()=>{
     try {
-      const r = await fetch("/api/ado-auth/status",{credentials:"include"});
+      const r = await fetch("/api/ado-default/status",{credentials:"include"});
       const d = await r.json();
-      setAuth({checking:false,configured:!!d.configured,authenticated:!!d.authenticated,user:d.user||null,redirectUri:d.redirectUri||"",tenant:d.tenant||""});
+      setDefaultAdo({checking:false,configured:!!d.configured,org:d.org||defaultOrg,project:d.project||preferredProject,hasPat:!!d.hasPat});
       if(d.org) setOrg(d.org);
       return d;
     } catch {
-      setAuth({checking:false,configured:false,authenticated:false,user:null});
+      setDefaultAdo({checking:false,configured:false,org:defaultOrg,project:preferredProject,hasPat:false});
       return null;
     }
-  },[]);
+  },[defaultOrg, preferredProject]);
 
   useEffect(()=>{
-    const qs = new URLSearchParams(window.location.search);
-    const authResult = qs.get("adoAuth");
-    if(authResult === "missing_config") setErr(qs.get("message") || "Microsoft sign-in is not configured on the server. Add ADO_AUTH_CLIENT_ID and ADO_AUTH_TENANT_ID, then restart QAHub.");
-    if(authResult === "error") setErr(qs.get("message") || "Microsoft sign-in failed.");
-    if(authResult) window.history.replaceState({}, "", window.location.pathname);
-    refreshAuth();
-  },[refreshAuth]);
+    refreshDefaultAdo();
+  },[refreshDefaultAdo]);
 
   const handleTest=async()=>{
     if(!org){setErr("Enter your Azure DevOps organization first.");return;}
-    if(!auth.authenticated){setErr("Sign in with Microsoft first.");return;}
     setLoading(true);setErr(null);setProjs([]);setTested(false);setUsingProxy(false);
     try{
       const list=await adoListProjects(org,"");
       setProjs(list);setTested(true);
       setUsingProxy(isProxyMode());
-      const preferred = list.find(p=>p.name.toLowerCase() === preferredProject.toLowerCase()) || (list.length===1 ? list[0] : null);
+      const preferredName = defaultAdo.project || preferredProject;
+      const preferred = list.find(p=>p.name.toLowerCase() === preferredName.toLowerCase()) || (list.length===1 ? list[0] : null);
       if(preferred){
         localStorage.setItem("qa-hub-last-project", preferred.name);
-        onConnect({org:parseOrg(org),auth:"microsoft",projectId:preferred.id,projectName:preferred.name,connectedAt:now(),user:auth.user});
+        onConnect({org:parseOrg(org),auth:"server-pat",projectId:preferred.id,projectName:preferred.name,connectedAt:now(),user:null});
       }
     }catch(e){
       // Give a much clearer message for the common CORS case
       if(e.message.includes("Both direct and proxy")){
-        setErr("Connection blocked. Try: (1) check your org name is correct, (2) confirm Microsoft sign-in is configured, (3) verify your account has Azure DevOps access.");
+        setErr("Connection blocked. Try: (1) check your org name is correct, (2) confirm ADO_PAT is configured on the server, (3) verify the PAT has Azure DevOps access.");
       } else {
         setErr(e.message);
       }
@@ -1118,13 +1113,13 @@ function ConnectScreen({onConnect}) {
   };
 
   useEffect(()=>{
-    if(auth.authenticated && org && !tested && !loading) handleTest();
+    if(defaultAdo.configured && org && !tested && !loading) handleTest();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[auth.authenticated, org]);
+  },[defaultAdo.configured, org]);
 
-  const startMicrosoftSignIn = () => {
+  const loadDefaultWorkspace = () => {
     if(!org){setErr("Enter your Azure DevOps organization first.");return;}
-    window.location.href = `/api/ado-auth/start?org=${encodeURIComponent(parseOrg(org))}`;
+    handleTest();
   };
 
   return (
@@ -1152,21 +1147,16 @@ function ConnectScreen({onConnect}) {
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <div style={{width:30,height:30,borderRadius:T.r,background:"#2563eb",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900}}>M</div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:12,fontWeight:800,color:T.text}}>Microsoft authentication</div>
+                <div style={{fontSize:12,fontWeight:800,color:T.text}}>Default Azure DevOps credential</div>
                 <div style={{fontSize:10,color:T.textFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  {auth.checking ? "Checking sign-in..." : auth.authenticated ? `${auth.user?.name || auth.user?.email || "Signed in"}` : auth.configured ? "Sign in with your Nucor Microsoft account" : "Microsoft app registration is not configured yet"}
+                  {defaultAdo.checking ? "Checking server configuration..." : defaultAdo.configured ? `Using server PAT for ${defaultAdo.org}/${defaultAdo.project}` : "Server PAT is not configured yet"}
                 </div>
               </div>
-              {auth.authenticated && <span style={{fontSize:10,fontWeight:800,color:T.green}}>Signed in</span>}
+              {defaultAdo.configured && <span style={{fontSize:10,fontWeight:800,color:T.green}}>Ready</span>}
             </div>
-            {!auth.authenticated && (
-              <Btn variant="navy" onClick={startMicrosoftSignIn} disabled={auth.checking||!org} style={{width:"100%",justifyContent:"center"}}>
-                <Ic.Plug size={14}/> Sign in with Microsoft
-              </Btn>
-            )}
-            {!auth.configured && !auth.checking && (
+            {!defaultAdo.configured && !defaultAdo.checking && (
               <div style={{fontSize:10,color:T.amber,lineHeight:1.6}}>
-                You can click sign in, but it will not complete until Azure App Service has <code>ADO_AUTH_CLIENT_ID</code>, <code>ADO_AUTH_TENANT_ID</code>, and the callback URL registered in Microsoft Entra.
+                Add <code>ADO_PAT</code>, <code>ADO_ORG</code>, and <code>ADO_PROJECT</code> in Azure App Service Environment variables, then restart the app.
               </div>
             )}
           </div>
@@ -1189,7 +1179,7 @@ function ConnectScreen({onConnect}) {
               <div style={{fontSize:12,color:T.green,fontWeight:600}}>✓ {projs.length} project{projs.length!==1?"s":""} found — select one to open:</div>
               <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:220,overflowY:"auto"}}>
                 {projs.map(p=>(
-                  <button key={p.id} onClick={()=>{localStorage.setItem("qa-hub-last-project", p.name);onConnect({org:parseOrg(org),auth:"microsoft",projectId:p.id,projectName:p.name,connectedAt:now(),user:auth.user});}}
+                  <button key={p.id} onClick={()=>{localStorage.setItem("qa-hub-last-project", p.name);onConnect({org:parseOrg(org),auth:"server-pat",projectId:p.id,projectName:p.name,connectedAt:now(),user:null});}}
                     style={{textAlign:"left",padding:"10px 14px",borderRadius:T.r,border:`1.5px solid ${T.border}`,background:T.bgCard,cursor:"pointer",display:"flex",alignItems:"center",gap:10,transition:"all 0.15s"}}
                     onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=T.accentLight;}}
                     onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=T.bgCard;}}>
@@ -1205,8 +1195,8 @@ function ConnectScreen({onConnect}) {
             </div>
           )}
 
-          <Btn variant="navy" onClick={auth.authenticated ? handleTest : startMicrosoftSignIn} disabled={loading||!org||auth.checking} style={{width:"100%",justifyContent:"center"}}>
-            {loading?<Spin label="Loading Azure DevOps…"/>:auth.authenticated?<><Ic.Plug size={14}/> Open Azure DevOps Workspace</>:<><Ic.Plug size={14}/> Sign in & Load Workspace</>}
+          <Btn variant="navy" onClick={loadDefaultWorkspace} disabled={loading||!org||defaultAdo.checking} style={{width:"100%",justifyContent:"center"}}>
+            {loading?<Spin label="Loading Azure DevOps…"/>:<><Ic.Plug size={14}/> Open Azure DevOps Workspace</>}
           </Btn>
         </div>
       </div>

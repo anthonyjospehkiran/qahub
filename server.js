@@ -117,6 +117,30 @@ function adoAuthScope() {
   return cleanEnvValue(process.env.ADO_AUTH_SCOPE || 'openid profile email offline_access 499b84ac-1321-427f-aa17-267ca6975798/.default');
 }
 
+function parseAdoOrg(raw) {
+  const value = cleanEnvValue(raw);
+  if (!value) return '';
+  try {
+    const u = new URL(value.includes('://') ? value : `https://${value}`);
+    if (u.hostname === 'dev.azure.com') return u.pathname.replace(/^\//, '').split('/')[0] || value;
+    if (u.hostname.endsWith('.visualstudio.com')) return u.hostname.replace('.visualstudio.com', '');
+  } catch {}
+  return value.replace(/^https?:\/\/dev\.azure\.com\//i, '').replace(/\/.*$/, '');
+}
+
+function defaultAdoConfig() {
+  return {
+    org: parseAdoOrg(process.env.ADO_ORG || process.env.VITE_ADO_ORG || 'Nucor-NBT'),
+    project: cleanEnvValue(process.env.ADO_PROJECT || process.env.VITE_ADO_PROJECT || 'NextGen'),
+    hasPat: !!cleanEnvValue(process.env.ADO_PAT),
+  };
+}
+
+function defaultAdoAuthorization() {
+  const pat = cleanEnvValue(process.env.ADO_PAT);
+  return pat ? `Basic ${Buffer.from(`:${pat}`).toString('base64')}` : '';
+}
+
 async function exchangeAdoToken(req, params) {
   const { tenant, clientId, clientSecret, redirectUri } = adoAuthConfig(req);
   if (!clientId) throw new Error('ADO_AUTH_CLIENT_ID is not configured on the server.');
@@ -412,9 +436,20 @@ app.post('/api/ado-auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/ado-default/status', (_req, res) => {
+  const cfg = defaultAdoConfig();
+  res.json({
+    configured: !!(cfg.org && cfg.project && cfg.hasPat),
+    org: cfg.org,
+    project: cfg.project,
+    hasPat: cfg.hasPat,
+  });
+});
+
 // ── 2. Proxy → Azure DevOps (eliminates CORS entirely) ───────────────────────
 // Frontend calls /api/ado?url=<encoded_ado_url>. The server re-issues the
-// request with the signed-in Microsoft user's Azure DevOps bearer token.
+// request with the signed-in Microsoft user's bearer token, a caller-provided
+// auth header, or the server-side default ADO_PAT for demo/no-login mode.
 app.all('/api/ado', async (req, res) => {
   const session = getSession(req, res);
   const target = decodeURIComponent(req.query.url || '');
@@ -424,9 +459,10 @@ app.all('/api/ado', async (req, res) => {
   try {
     const hasHeaderAuth = !!req.headers.authorization;
     const hasSessionAuth = await ensureAdoToken(req, session);
-    const authorization = req.headers.authorization || (hasSessionAuth ? `Bearer ${session.adoAccessToken}` : '');
+    const defaultAuthorization = defaultAdoAuthorization();
+    const authorization = req.headers.authorization || (hasSessionAuth ? `Bearer ${session.adoAccessToken}` : '') || defaultAuthorization;
     if (!authorization) {
-      return res.status(401).json({ error: 'Not signed in to Microsoft. Click Sign in with Microsoft to access Azure DevOps.' });
+      return res.status(401).json({ error: 'Azure DevOps credential is not configured. Set ADO_PAT, ADO_ORG, and ADO_PROJECT in App Service Environment variables.' });
     }
     const upstream = await fetch(target, {
       method:  req.method,
@@ -448,7 +484,9 @@ app.all('/api/ado', async (req, res) => {
           error: upstream.status === 401
             ? (hasHeaderAuth
               ? 'Azure DevOps rejected the provided authorization header.'
-              : 'Azure DevOps rejected the Microsoft sign-in token. Confirm this user has access to the organization/project and the app registration has Azure DevOps delegated permissions.')
+              : defaultAuthorization
+                ? 'Azure DevOps rejected the server-side ADO_PAT. Verify the PAT is active and has Work Items read access to this organization/project.'
+                : 'Azure DevOps rejected the Microsoft sign-in token. Confirm this user has access to the organization/project and the app registration has Azure DevOps delegated permissions.')
             : 'Azure DevOps returned non-JSON content.',
           status: upstream.status,
           preview,
