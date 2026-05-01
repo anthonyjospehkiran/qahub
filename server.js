@@ -71,16 +71,49 @@ function decodeJwtPayload(token) {
   }
 }
 
+function cleanEnvValue(value) {
+  return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function pickQueryOrRaw(value, key) {
+  const raw = cleanEnvValue(value);
+  if (!raw) return '';
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      return cleanEnvValue(u.searchParams.get(key) || raw);
+    }
+    if (raw.includes('=') || raw.includes('&')) {
+      const params = new URLSearchParams(raw.replace(/^\?/, ''));
+      return cleanEnvValue(params.get(key) || raw);
+    }
+  } catch {}
+  return raw;
+}
+
+function cleanTenant(value) {
+  const raw = cleanEnvValue(value);
+  if (!raw) return 'organizations';
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      const part = u.pathname.split('/').filter(Boolean)[0];
+      return part || 'organizations';
+    }
+  } catch {}
+  return raw.replace(/^\/+|\/+$/g, '').split('/')[0] || 'organizations';
+}
+
 function adoAuthConfig(req) {
-  const tenant = process.env.ADO_AUTH_TENANT_ID || process.env.AZURE_TENANT_ID || 'organizations';
-  const clientId = process.env.ADO_AUTH_CLIENT_ID || process.env.AZURE_CLIENT_ID || '';
-  const clientSecret = process.env.ADO_AUTH_CLIENT_SECRET || process.env.AZURE_CLIENT_SECRET || '';
-  const redirectUri = process.env.ADO_AUTH_REDIRECT_URI || absoluteUrl(req, '/api/ado-auth/callback');
+  const tenant = cleanTenant(process.env.ADO_AUTH_TENANT_ID || process.env.AZURE_TENANT_ID || 'organizations');
+  const clientId = pickQueryOrRaw(process.env.ADO_AUTH_CLIENT_ID || process.env.AZURE_CLIENT_ID || '', 'client_id');
+  const clientSecret = pickQueryOrRaw(process.env.ADO_AUTH_CLIENT_SECRET || process.env.AZURE_CLIENT_SECRET || '', 'client_secret');
+  const redirectUri = cleanEnvValue(process.env.ADO_AUTH_REDIRECT_URI || absoluteUrl(req, '/api/ado-auth/callback'));
   return { tenant, clientId, clientSecret, redirectUri };
 }
 
 function adoAuthScope() {
-  return process.env.ADO_AUTH_SCOPE || 'openid profile email offline_access 499b84ac-1321-427f-aa17-267ca6975798/.default';
+  return cleanEnvValue(process.env.ADO_AUTH_SCOPE || 'openid profile email offline_access 499b84ac-1321-427f-aa17-267ca6975798/.default');
 }
 
 async function exchangeAdoToken(req, params) {
@@ -291,6 +324,21 @@ app.get('/api/ado-auth/status', async (req, res) => {
   });
 });
 
+app.get('/api/ado-auth/config', (req, res) => {
+  const { clientId, tenant, redirectUri } = adoAuthConfig(req);
+  const scope = adoAuthScope();
+  const easyAuthHeaders = Object.keys(req.headers).some(h => h.toLowerCase().startsWith('x-ms-client-'));
+  res.json({
+    configured: !!clientId,
+    tenant,
+    redirectUri,
+    clientIdSuffix: clientId ? clientId.slice(-6) : '',
+    clientIdLooksValidGuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId),
+    scopeHasClientId: /\bclient_id\s*=/i.test(scope),
+    easyAuthHeaders,
+  });
+});
+
 app.get('/api/ado-auth/start', (req, res) => {
   const session = getSession(req, res);
   const { tenant, clientId, redirectUri } = adoAuthConfig(req);
@@ -314,6 +362,12 @@ app.get('/api/ado-auth/start', (req, res) => {
   authUrl.searchParams.set('code_challenge', challenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
   authUrl.searchParams.set('prompt', 'select_account');
+  console.log('[ado-auth] redirect', {
+    tenant,
+    redirectUri,
+    clientIdSuffix: clientId.slice(-6),
+    queryKeys: Array.from(authUrl.searchParams.keys()),
+  });
   res.redirect(authUrl.toString());
 });
 
